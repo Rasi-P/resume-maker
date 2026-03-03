@@ -67,16 +67,26 @@ Primary endpoint:
 ## Tech Stack (Current)
 
 Backend:
+- Python + Django 4.2
 - Django REST Framework
-- PostgreSQL
-- OpenAI-compatible API client (OpenAI or Groq-compatible endpoint)
-- LaTeX compiler support (tectonic/xelatex/pdflatex)
-- ReportLab for PDF generation
+- JWT auth (`djangorestframework-simplejwt`)
+- PostgreSQL (`psycopg2-binary`)
+- CORS support (`django-cors-headers`)
+- OpenAI SDK (`openai`) with OpenAI/Groq-compatible base URL support
+- PDF/DOCX tooling: `pypdf`, `python-docx`, `reportlab`
+- Async jobs: Celery + Redis
+- Runtime/deploy libs: `gunicorn`, `whitenoise`
+- Testing tools: `pytest`, `pytest-django`
 
 Frontend:
-- React + TypeScript (Vite)
-- Tailwind CSS
+- React 18 + TypeScript + Vite
+- React Router (`react-router-dom`)
 - Axios
+- Tailwind CSS (+ PostCSS + Autoprefixer)
+- UI libraries in use: `framer-motion`, `lucide-react`, `react-dropzone`
+
+System tools:
+- LaTeX compiler support (`tectonic`, `xelatex`, or `pdflatex`)
 
 ## Local Setup
 
