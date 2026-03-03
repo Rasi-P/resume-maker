@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ATSScore } from '../components/ATSScore';
 import { authService, resumeOptimizerService, resumeService } from '../services/api';
-import { GeneratedDocument, OptimizerGenerateResponse, Resume } from '../types';
+import { DiffToken, GeneratedDocument, OptimizerGenerateResponse, Resume } from '../types';
+import { getAccessToken } from '../utils/auth';
 import { Copy, Download, FileText, RotateCcw } from 'lucide-react';
 
 export const Home: React.FC = () => {
@@ -23,6 +24,7 @@ export const Home: React.FC = () => {
 
   const [result, setResult] = useState<GeneratedDocument | null>(null);
   const [showDiff, setShowDiff] = useState(false);
+  const [diffMode, setDiffMode] = useState<'summary' | 'highlight'>('summary');
 
   const latexResumes = useMemo(
     () => resumes.filter((resume) => Boolean(resume.latex_file)),
@@ -60,6 +62,7 @@ export const Home: React.FC = () => {
   const resetForm = () => {
     setResult(null);
     setShowDiff(false);
+    setDiffMode('summary');
     setCompanyName('');
     setCompanyLocation('');
     setJobTitle('');
@@ -80,6 +83,38 @@ export const Home: React.FC = () => {
     const fullEmail = `Subject: ${result.email_subject}\n\n${result.email_body}`;
     await navigator.clipboard.writeText(fullEmail);
     alert('Email copied to clipboard');
+  };
+
+  const handleDownload = async (path: string | null, fileName: string) => {
+    if (!path) {
+      alert('File is not available');
+      return;
+    }
+
+    try {
+      const source = getMediaUrl(path);
+      const token = getAccessToken();
+      const useAuthHeader = token && !source.startsWith('data:');
+      const response = await fetch(source, {
+        headers: useAuthHeader ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (!response.ok) {
+        throw new Error(`Download failed with status ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (error) {
+      console.error('Download error:', error);
+      alert('Failed to download file. Please try again.');
+    }
   };
 
   const handleGenerate = async () => {
@@ -118,6 +153,7 @@ export const Home: React.FC = () => {
       const data = response.data as OptimizerGenerateResponse;
       setResult(data.document);
       setShowDiff(false);
+      setDiffMode('summary');
     } catch (error: any) {
       const message = error.response?.data?.error || 'Failed to generate optimized documents';
       alert(message);
@@ -126,6 +162,82 @@ export const Home: React.FC = () => {
       setLoadingGenerate(false);
     }
   };
+
+  const formatDiffText = (tokens: DiffToken[]) =>
+    tokens
+      .map((item) => item.word)
+      .join(' ')
+      .replace(/\s+([,.;:!?])/g, '$1')
+      .replace(/\(\s+/g, '(')
+      .replace(/\s+\)/g, ')')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+
+  const diffData = useMemo(() => {
+    const tokens = result?.diff_json || [];
+    if (!tokens.length) {
+      return null;
+    }
+
+    let addedCount = 0;
+    let removedCount = 0;
+    const groupedChanges: Array<{ type: 'added' | 'removed'; text: string }> = [];
+    let currentType: 'added' | 'removed' | null = null;
+    let currentWords: string[] = [];
+
+    const flushGroup = () => {
+      if (!currentType || currentWords.length === 0) {
+        return;
+      }
+      groupedChanges.push({
+        type: currentType,
+        text: currentWords
+          .join(' ')
+          .replace(/\s+([,.;:!?])/g, '$1')
+          .replace(/\(\s+/g, '(')
+          .replace(/\s+\)/g, ')')
+          .replace(/\s{2,}/g, ' ')
+          .trim(),
+      });
+      currentWords = [];
+      currentType = null;
+    };
+
+    for (const token of tokens) {
+      if (token.type === 'added') {
+        addedCount += 1;
+      } else if (token.type === 'removed') {
+        removedCount += 1;
+      }
+
+      if (token.type === 'unchanged') {
+        flushGroup();
+        continue;
+      }
+
+      if (!currentType || currentType === token.type) {
+        currentType = token.type;
+        currentWords.push(token.word);
+        continue;
+      }
+
+      flushGroup();
+      currentType = token.type;
+      currentWords.push(token.word);
+    }
+    flushGroup();
+
+    const originalText = formatDiffText(tokens.filter((token) => token.type !== 'added'));
+    const updatedText = formatDiffText(tokens.filter((token) => token.type !== 'removed'));
+
+    return {
+      addedCount,
+      removedCount,
+      groupedChanges: groupedChanges.slice(0, 40),
+      originalText,
+      updatedText,
+    };
+  }, [result?.diff_json]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-100">
@@ -289,10 +401,9 @@ export const Home: React.FC = () => {
                 )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
-                  <a
-                    href={getMediaUrl(result.resume_pdf)}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => handleDownload(result.resume_pdf, 'tailored_resume.pdf')}
                     className={`flex items-center justify-center gap-2 py-3 rounded-lg ${
                       result.resume_pdf
                         ? 'bg-blue-600 text-white hover:bg-blue-700'
@@ -301,11 +412,10 @@ export const Home: React.FC = () => {
                   >
                     <Download size={18} />
                     Download Resume PDF
-                  </a>
-                  <a
-                    href={getMediaUrl(result.cover_letter_pdf)}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDownload(result.cover_letter_pdf, 'cover_letter.pdf')}
                     className={`flex items-center justify-center gap-2 py-3 rounded-lg ${
                       result.cover_letter_pdf
                         ? 'bg-indigo-600 text-white hover:bg-indigo-700'
@@ -314,11 +424,10 @@ export const Home: React.FC = () => {
                   >
                     <FileText size={18} />
                     Download Cover Letter PDF
-                  </a>
-                  <a
-                    href={getMediaUrl(result.cover_letter_docx)}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDownload(result.cover_letter_docx, 'cover_letter.docx')}
                     className={`flex items-center justify-center gap-2 py-3 rounded-lg ${
                       result.cover_letter_docx
                         ? 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
@@ -327,7 +436,7 @@ export const Home: React.FC = () => {
                   >
                     <FileText size={18} />
                     Download Cover Letter DOCX
-                  </a>
+                  </button>
                   <button
                     onClick={handleCopyEmail}
                     className="flex items-center justify-center gap-2 bg-gray-800 text-white py-3 rounded-lg hover:bg-gray-900"
@@ -370,27 +479,105 @@ export const Home: React.FC = () => {
                 </div>
               </div>
 
-              {showDiff && result.diff_json && (
+              {showDiff && result.diff_json && diffData && (
                 <div className="bg-white rounded-xl shadow-lg p-6">
                   <h2 className="text-2xl font-semibold text-gray-800 mb-4">
-                    {result.is_latex_based ? 'LaTeX Difference Highlight' : 'Resume Difference Highlight'}
+                    {result.is_latex_based ? 'LaTeX Resume Diff' : 'Resume Diff'}
                   </h2>
-                  <div className="p-4 border border-gray-200 rounded-lg leading-8">
-                    {result.diff_json.map((item, index) => (
-                      <span
-                        key={`${item.word}-${index}`}
-                        className={
-                          item.type === 'added'
-                            ? 'bg-yellow-200 px-1 rounded'
-                            : item.type === 'removed'
-                            ? 'bg-red-100 text-red-600 line-through px-1 rounded'
-                            : ''
-                        }
-                      >
-                        {item.word}{' '}
-                      </span>
-                    ))}
+                  <div className="flex flex-wrap items-center gap-2 mb-4">
+                    <button
+                      type="button"
+                      onClick={() => setDiffMode('summary')}
+                      className={`px-3 py-1.5 rounded-md text-sm border ${
+                        diffMode === 'summary'
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      Summary View
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDiffMode('highlight')}
+                      className={`px-3 py-1.5 rounded-md text-sm border ${
+                        diffMode === 'highlight'
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      Highlight View
+                    </button>
                   </div>
+
+                  {diffMode === 'summary' ? (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="border border-emerald-200 bg-emerald-50 rounded-lg p-3">
+                          <p className="text-xs uppercase tracking-wide text-emerald-700 font-semibold">Added Tokens</p>
+                          <p className="text-2xl font-bold text-emerald-800">{diffData.addedCount}</p>
+                        </div>
+                        <div className="border border-rose-200 bg-rose-50 rounded-lg p-3">
+                          <p className="text-xs uppercase tracking-wide text-rose-700 font-semibold">Removed Tokens</p>
+                          <p className="text-2xl font-bold text-rose-800">{diffData.removedCount}</p>
+                        </div>
+                      </div>
+
+                      <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                        <h3 className="font-semibold text-gray-800 mb-3">Key Changes</h3>
+                        {diffData.groupedChanges.length === 0 ? (
+                          <p className="text-sm text-gray-600">No grouped changes available.</p>
+                        ) : (
+                          <div className="space-y-2 max-h-56 overflow-auto pr-1">
+                            {diffData.groupedChanges.map((change, index) => (
+                              <div
+                                key={`${change.type}-${index}`}
+                                className={`text-sm rounded-md p-2 border ${
+                                  change.type === 'added'
+                                    ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                                    : 'bg-rose-50 border-rose-200 text-rose-900'
+                                }`}
+                              >
+                                <span className="font-semibold mr-2">{change.type === 'added' ? '+ Added:' : '- Removed:'}</span>
+                                {change.text}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        <div className="border border-gray-200 rounded-lg p-4">
+                          <h3 className="font-semibold text-gray-800 mb-2">Before</h3>
+                          <p className="text-sm text-gray-700 whitespace-pre-wrap max-h-64 overflow-auto">
+                            {diffData.originalText}
+                          </p>
+                        </div>
+                        <div className="border border-gray-200 rounded-lg p-4">
+                          <h3 className="font-semibold text-gray-800 mb-2">After</h3>
+                          <p className="text-sm text-gray-700 whitespace-pre-wrap max-h-64 overflow-auto">
+                            {diffData.updatedText}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-4 border border-gray-200 rounded-lg leading-8 bg-gray-50">
+                      {result.diff_json.map((item, index) => (
+                        <span
+                          key={`${item.word}-${index}`}
+                          className={
+                            item.type === 'added'
+                              ? 'bg-emerald-200 text-emerald-900 px-1 rounded'
+                              : item.type === 'removed'
+                              ? 'bg-rose-200 text-rose-900 line-through px-1 rounded'
+                              : 'text-gray-700'
+                          }
+                        >
+                          {item.word}{' '}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

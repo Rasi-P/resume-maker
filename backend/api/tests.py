@@ -115,6 +115,17 @@ class LatexTemplatePlaceholderTests(SimpleTestCase):
         self.assertNotIn("{{SUMMARY}}", rendered)
         self.assertNotIn("{{SKILLS}}", rendered)
 
+    def test_format_latex_for_readability_adds_line_breaks_before_sections(self):
+        raw = (
+            r"\begin{document}\section{Summary}Updated summary text."
+            r"\section{Skills}Python, Django\end{document}"
+        )
+        formatted = AIService._format_latex_for_readability(raw)
+
+        self.assertIn("\n\\section{Summary}", formatted)
+        self.assertIn("\n\\section{Skills}", formatted)
+        self.assertIn("\n\\end{document}", formatted)
+
 
 class CoverLetterExportTests(SimpleTestCase):
     def test_generate_cover_letter_docx(self):
@@ -166,13 +177,48 @@ class ApplicationDocsPromptTests(SimpleTestCase):
         self.assertIn("Generate a professional job application email.", called_prompt)
         self.assertIn("Keep it concise but substantive (about 90-140 words) in 2-3 short paragraphs.", called_prompt)
         self.assertIn('Subject line included via the "email_subject" field.', called_prompt)
-        self.assertIn("Subject: Application for Backend Developer", result['cover_letter_text'])
+        self.assertNotIn("Cover Letter - Backend Developer", result['cover_letter_text'])
+        self.assertIn("Date:", result['cover_letter_text'])
         self.assertIn("Dear Hiring Manager,", result['cover_letter_text'])
-        self.assertIn("Sincerely,\nAleena Jomy", result['cover_letter_text'])
+        self.assertIn("Warm regards,\nAleena Jomy", result['cover_letter_text'])
         self.assertTrue(result['email_body'].startswith("Dear Hiring Team,"))
+        self.assertIn("I hope you are doing well.", result['email_body'])
+        self.assertIn("My name is Aleena Jomy, and I am writing to apply for the Backend Developer position at Acme.", result['email_body'])
+        self.assertIn("Thank you for your time and consideration.", result['email_body'])
         self.assertIn("Warm regards,", result['email_body'])
-        self.assertIn("Acme", result['email_subject'])
-        self.assertGreaterEqual(len(result['email_body'].split()), 70)
+        self.assertIn("Application for Backend Developer", result['email_subject'])
+
+    @patch('api.ai_service.AIService._call_openai_with_retry')
+    def test_generate_application_documents_includes_portfolio_line_when_available(self, mock_ai_call):
+        mock_ai_call.return_value = (
+            {
+                'cover_letter_text': 'B' * 260,
+                'email_subject': 'Application for Backend Developer',
+                'email_body': 'Please find my application attached.',
+            },
+            {'prompt_tokens': 10, 'completion_tokens': 20, 'total_tokens': 30},
+        )
+
+        result = AIService.generate_application_documents(
+            user_profile={
+                'full_name': 'Aleena Jomy',
+                'portfolio_url': 'aleenajomy.github.io/',
+                'linkedin_url': 'linkedin.com/in/aleena-jomy',
+                'github_url': 'github.com/Aleenajomy',
+            },
+            tailored_resume_text='Python Django APIs testing and backend engineering experience.',
+            job_data={
+                'company_name': 'Acme',
+                'job_title': 'Backend Developer',
+                'job_description': 'Build scalable APIs with Python and Django in a product team.',
+                'requirements': 'Collaboration and ownership.',
+            },
+        )
+
+        self.assertIn("You can also view my portfolio and project details at:", result['email_body'])
+        self.assertIn("https://aleenajomy.github.io/", result['email_body'])
+        self.assertIn("LinkedIn: https://linkedin.com/in/aleena-jomy", result['email_body'])
+        self.assertIn("GitHub: https://github.com/Aleenajomy", result['email_body'])
 
 
 class CoverLetterTemplateFormattingTests(SimpleTestCase):
@@ -200,13 +246,49 @@ class CoverLetterTemplateFormattingTests(SimpleTestCase):
 
         self.assertIn("Kannur, Kerala, India", formatted)
         self.assertIn("Email: aleenajomy4@gmail.com", formatted)
-        self.assertIn("Phone: +91-8547139184", formatted)
+        self.assertIn("Mobile: +91-8547139184", formatted)
         self.assertIn("LinkedIn: linkedin.com/in/aleena-jomy", formatted)
         self.assertIn("GitHub: github.com/Aleenajomy", formatted)
+        # self.assertNotIn("Cover Letter - Software Developer - Fresher", formatted)
+        self.assertTrue(formatted.startswith("Aleena Jomy\n"))
+        self.assertIn("Date:", formatted)
         self.assertIn("Hiring Manager", formatted)
         self.assertIn("SMARTHMS & SOLUTIONS (P) Ltd", formatted)
         self.assertIn("Technopark, Kerala", formatted)
-        self.assertIn("Subject: Application for Software Developer - Fresher", formatted)
         self.assertIn("Dear Hiring Manager,", formatted)
-        self.assertTrue(formatted.strip().endswith("Sincerely,\nAleena Jomy"))
+        self.assertTrue(formatted.strip().endswith("Warm regards,\nAleena Jomy"))
         self.assertNotIn("Dear Hiring Manager,\n\nDear Hiring Manager", formatted)
+
+    def test_format_cover_letter_template_splits_dense_single_block_body(self):
+        dense_body = (
+            "I am excited to apply for this role. I have worked on backend APIs and deployment workflows. "
+            "I am comfortable with Python and Django in team environments. "
+            "I have built and tested scalable services with clean coding practices. "
+            "I collaborate effectively and communicate clearly across teams. "
+            "I am eager to contribute and continue learning in a structured engineering team. "
+            "I would welcome the opportunity to discuss my fit for this position."
+        )
+        formatted = AIService.format_cover_letter_template(
+            user_profile={'full_name': 'Aleena Jomy'},
+            job_data={'company_name': 'Acme', 'job_title': 'Backend Developer', 'company_location': 'Remote'},
+            body_text=dense_body,
+        )
+
+        body_section = formatted.split("Dear Hiring Manager,\n", 1)[1].split("\n\nWarm regards,", 1)[0]
+        self.assertGreaterEqual(body_section.count("\n\n"), 2)
+
+
+class AIJsonParsingTests(SimpleTestCase):
+    def test_extract_json_payload_from_mixed_text(self):
+        raw = (
+            "Here is your output:\n"
+            "{\n"
+            '  "cover_letter_text": "sample",\n'
+            '  "email_subject": "Application",\n'
+            '  "email_body": "Body"\n'
+            "}\n"
+            "Thanks!"
+        )
+        payload = AIService._extract_json_payload(raw)
+        self.assertEqual(payload["cover_letter_text"], "sample")
+        self.assertEqual(payload["email_subject"], "Application")

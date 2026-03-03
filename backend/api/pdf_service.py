@@ -282,8 +282,10 @@ class PDFService:
             styles = getSampleStyleSheet()
             story = []
 
-            story.append(Paragraph(name or 'Your Name', styles['Heading1']))
-            story.append(Spacer(1, 12))
+            display_name = (name or '').strip()
+            if display_name:
+                story.append(Paragraph(display_name, styles['Heading1']))
+                story.append(Spacer(1, 12))
 
             for para in content.split('\n'):
                 if para.strip():
@@ -355,15 +357,21 @@ class PDFService:
         if not content or not content.strip():
             raise ValueError("Cover letter content is empty")
 
-        header = PDFService._escape_latex_text(name or 'Candidate')
+        header = PDFService._escape_latex_text((name or '').strip())
         paragraphs = PDFService._to_paragraphs(content)
         if not paragraphs:
             raise ValueError("Cover letter content is empty")
 
-        body = "\n\n".join(
-            f"{PDFService._escape_latex_text(paragraph)}\n\\par"
-            for paragraph in paragraphs
-        )
+        body_blocks = []
+        for paragraph in paragraphs:
+            raw_lines = [line.strip() for line in paragraph.split('\n') if line.strip()]
+            escaped_lines = [PDFService._escape_latex_text(line) for line in raw_lines]
+            if not escaped_lines:
+                continue
+            block = " \\\\\n".join(escaped_lines)
+            body_blocks.append(f"{block}\n\\par")
+        body = "\n\n".join(body_blocks)
+        header_block = f"\\textbf{{{header}}}\n\n" if header else ""
         return rf"""\documentclass[11pt]{{letter}}
 \usepackage[margin=1in]{{geometry}}
 \usepackage[T1]{{fontenc}}
@@ -372,8 +380,8 @@ class PDFService:
 \setlength{{\parindent}}{{0pt}}
 \setlength{{\parskip}}{{10pt}}
 \begin{{document}}
-\textbf{{{header}}}
-
+\raggedright
+{header_block}
 {body}
 \end{{document}}
 """

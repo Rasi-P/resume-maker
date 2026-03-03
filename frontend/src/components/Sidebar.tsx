@@ -13,7 +13,7 @@ export const Sidebar: React.FC = () => {
   };
 
   const menuItems = [
-    { icon: FileText, label: 'Resume Optimizer', path: '/' },
+    { icon: FileText, label: 'Resume Optimizer', path: '/resume-optimizer' },
     { icon: User, label: 'Dashboard', path: '/dashboard' },
   ];
 

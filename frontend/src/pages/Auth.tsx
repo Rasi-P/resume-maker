@@ -12,6 +12,10 @@ const defaultFormState = {
 };
 
 const extractErrorMessage = (error: unknown): string => {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
   if (typeof error !== 'object' || error === null) {
     return 'Request failed. Please try again.';
   }
@@ -65,7 +69,7 @@ export const Auth: React.FC = () => {
 
   const handleLogin = async () => {
     await authService.login(formState.username.trim(), formState.password);
-    navigate('/', { replace: true });
+    navigate('/resume-optimizer', { replace: true });
   };
 
   const handleRegister = async () => {

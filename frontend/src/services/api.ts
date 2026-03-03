@@ -8,7 +8,10 @@ import {
 } from '../utils/auth';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-const API_PREFIX = `${API_BASE_URL}/api`;
+const NORMALIZED_API_BASE_URL = API_BASE_URL.replace(/\/+$/, '');
+const API_PREFIX = NORMALIZED_API_BASE_URL.endsWith('/api')
+  ? NORMALIZED_API_BASE_URL
+  : `${NORMALIZED_API_BASE_URL}/api`;
 
 const api = axios.create({
   baseURL: API_PREFIX,
@@ -74,7 +77,22 @@ export const authService = {
 
   login: async (username: string, password: string) => {
     const response = await axios.post(`${API_PREFIX}/token/`, { username, password });
-    setTokens(response.data.access, response.data.refresh);
+    const data = response.data || {};
+    const accessToken = data.access ?? data.access_token;
+    const refreshToken = data.refresh ?? data.refresh_token;
+
+    if (!accessToken || typeof accessToken !== 'string') {
+      throw new Error('Login succeeded but no access token was returned by the server.');
+    }
+
+    if (refreshToken && typeof refreshToken === 'string') {
+      setTokens(accessToken, refreshToken);
+    } else {
+      // Some auth backends return only access token; keep user logged in without refresh flow.
+      setAccessToken(accessToken);
+      localStorage.removeItem('refresh_token');
+    }
+
     return response.data;
   },
   

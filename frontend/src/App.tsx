@@ -13,10 +13,19 @@ function App() {
       <Routes>
         <Route
           path="/login"
-          element={isAuthenticated() ? <Navigate to="/" replace /> : <Auth />}
+          element={isAuthenticated() ? <Navigate to="/resume-optimizer" replace /> : <Auth />}
         />
         <Route
           path="/"
+          element={
+            <Navigate
+              to={isAuthenticated() ? '/resume-optimizer' : '/login'}
+              replace
+            />
+          }
+        />
+        <Route
+          path="/resume-optimizer"
           element={
             <ProtectedRoute>
               <Home />
@@ -44,14 +53,6 @@ function App() {
           element={
             <ProtectedRoute>
               <Certifications />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/resume-optimizer"
-          element={
-            <ProtectedRoute>
-              <Home />
             </ProtectedRoute>
           }
         />

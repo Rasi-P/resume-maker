@@ -138,6 +138,15 @@ STOPWORDS = {
 
 class AIService:
     @staticmethod
+    def _normalize_public_url(url: str) -> str:
+        value = str(url or '').strip()
+        if not value:
+            return ''
+        if re.match(r'^https?://', value, flags=re.IGNORECASE):
+            return value
+        return f"https://{value}"
+
+    @staticmethod
     def _clean_cover_letter_body(body_text: str) -> str:
         if not body_text:
             return ''
@@ -147,17 +156,46 @@ class AIService:
         # Remove common wrappers so backend controls exact final template.
         text = re.sub(r'^\s*(subject\s*:.*)\n+', '', text, flags=re.IGNORECASE)
         text = re.sub(r'^\s*dear\s+hiring\s+manager\s*,?\s*', '', text, flags=re.IGNORECASE)
-        text = re.sub(
-            r'\n*\s*(thanks|thank you)[\s\S]*$',
-            '',
-            text,
-            flags=re.IGNORECASE,
-        )
+        # Keep thank-you paragraphs; remove only closing/sign-off wrappers.
         text = re.sub(r'\n*\s*sincerely[\s\S]*$', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'\n*\s*warm\s+regards[\s\S]*$', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'\n*\s*best\s+regards[\s\S]*$', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'\n*\s*regards[\s\S]*$', '', text, flags=re.IGNORECASE)
 
         # Normalize paragraph spacing.
         paragraphs = [p.strip() for p in re.split(r'\n\s*\n', text) if p.strip()]
-        return '\n\n'.join(paragraphs).strip()
+        normalized = '\n\n'.join(paragraphs).strip()
+        return AIService._ensure_cover_letter_paragraph_flow(normalized)
+
+    @staticmethod
+    def _ensure_cover_letter_paragraph_flow(body_text: str) -> str:
+        text = str(body_text or '').strip()
+        if not text:
+            return ''
+
+        paragraphs = [p.strip() for p in re.split(r'\n\s*\n', text) if p.strip()]
+        if len(paragraphs) >= 3:
+            return '\n\n'.join(paragraphs)
+
+        # If AI returned a single dense block, split by sentence groups to improve readability.
+        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+        if len(sentences) < 6:
+            return '\n\n'.join(paragraphs)
+
+        target_paragraphs = 4 if len(sentences) >= 10 else 3
+        chunk_size = max(2, len(sentences) // target_paragraphs)
+        rebuilt: List[str] = []
+        cursor = 0
+        for index in range(target_paragraphs - 1):
+            remaining = len(sentences) - cursor
+            remaining_groups = (target_paragraphs - 1) - index
+            take = max(2, min(chunk_size, remaining - (remaining_groups * 2)))
+            rebuilt.append(' '.join(sentences[cursor:cursor + take]).strip())
+            cursor += take
+        rebuilt.append(' '.join(sentences[cursor:]).strip())
+
+        rebuilt = [p for p in rebuilt if p]
+        return '\n\n'.join(rebuilt) if rebuilt else text
 
     @staticmethod
     def format_cover_letter_template(
@@ -179,7 +217,7 @@ class AIService:
         company_name = str(job_data.get('company_name', '')).strip() or 'Company Name'
         job_title = str(job_data.get('job_title', '')).strip() or 'Software Developer'
         company_location = str(job_data.get('company_location', '')).strip() or 'Company Location'
-        month_year = datetime.utcnow().strftime('%B %Y')
+        today = datetime.utcnow().strftime('%d/%m/%Y')
 
         cleaned_body = AIService._clean_cover_letter_body(body_text)
         if not cleaned_body:
@@ -189,24 +227,23 @@ class AIService:
             )
 
         lines = [
+            full_name,
             location,
+            f"Mobile: {phone}" if phone else "Mobile: ",
             f"Email: {email}" if email else "Email: ",
-            f"Phone: {phone}" if phone else "Phone: ",
             f"LinkedIn: {linkedin}" if linkedin else "LinkedIn: ",
             f"GitHub: {github}" if github else "GitHub: ",
             "",
-            month_year,
+            f"Date: {today}",
             "",
             "Hiring Manager",
             company_name,
             company_location,
             "",
-            f"Subject: Application for {job_title}",
-            "",
             "Dear Hiring Manager,",
             cleaned_body,
             "",
-            "Sincerely,",
+            "Warm regards,",
             full_name,
         ]
         return '\n'.join(lines)
@@ -222,16 +259,52 @@ class AIService:
         if not content:
             raise ValueError("Empty response from AI service")
 
+        raw = str(content).strip()
+
         try:
-            return json.loads(content)
+            return json.loads(raw)
         except json.JSONDecodeError:
-            if '```json' in content:
-                json_str = content.split('```json', 1)[1].split('```', 1)[0].strip()
+            if '```json' in raw:
+                json_str = raw.split('```json', 1)[1].split('```', 1)[0].strip()
                 return json.loads(json_str)
-            if '```' in content:
-                json_str = content.split('```', 1)[1].split('```', 1)[0].strip()
+            if '```' in raw:
+                json_str = raw.split('```', 1)[1].split('```', 1)[0].strip()
                 return json.loads(json_str)
-            raise ValueError(f"Invalid JSON response from AI service: {content[:200]}")
+
+            # Fallback: attempt to parse first JSON object found in mixed text.
+            start = raw.find('{')
+            end = raw.rfind('}')
+            if start != -1 and end != -1 and end > start:
+                json_str = raw[start:end + 1].strip()
+                return json.loads(json_str)
+
+            raise ValueError(f"Invalid JSON response from AI service: {raw[:200]}")
+
+    @staticmethod
+    def _format_latex_for_readability(latex_text: str) -> str:
+        text = str(latex_text or '').replace('\r\n', '\n').replace('\r', '\n')
+        if not text.strip():
+            return ''
+
+        # Improve readability without changing LaTeX meaning.
+        text = re.sub(r'(?<!\n)(\\section\*?\{)', r'\n\1', text)
+        text = re.sub(r'(?<!\n)(\\begin\{)', r'\n\1', text)
+        text = re.sub(r'(?<!\n)(\\end\{)', r'\n\1', text)
+        text = re.sub(r'\n{3,}', '\n\n', text)
+
+        formatted_lines: List[str] = []
+        prev_blank = False
+        for raw_line in text.split('\n'):
+            line = raw_line.rstrip()
+            if not line.strip():
+                if not prev_blank:
+                    formatted_lines.append('')
+                prev_blank = True
+                continue
+            formatted_lines.append(line)
+            prev_blank = False
+
+        return '\n'.join(formatted_lines).strip() + '\n'
 
     @staticmethod
     def _normalize_usage(usage: Any) -> Optional[Dict[str, int]]:
@@ -263,6 +336,7 @@ class AIService:
                     model=MODEL_NAME,
                     messages=messages,
                     temperature=temperature,
+                    response_format={"type": "json_object"},
                     timeout=30,
                 )
                 content = response.choices[0].message.content
@@ -548,14 +622,52 @@ Return JSON with this exact schema:
     @staticmethod
     def _ensure_email_subject_has_company(email_subject: str, job_data: Dict[str, Any]) -> str:
         subject = str(email_subject or '').strip()
-        company_name = str((job_data or {}).get('company_name', '')).strip()
-        if not subject or not company_name:
+        if not subject:
             return subject
 
-        if company_name.lower() in subject.lower():
+        if subject.lower().startswith('application for'):
             return subject
 
-        return f"{subject} - {company_name}"
+        role = str((job_data or {}).get('job_title', '')).strip()
+        if role:
+            return f"Application for {role} Position"
+        return subject
+
+    @staticmethod
+    def _clean_email_body(body_text: str, full_name: str) -> str:
+        if not body_text:
+            return ''
+
+        text = body_text.replace('\r\n', '\n').replace('\r', '\n').strip()
+        lines = [line.strip() for line in text.split('\n')]
+        cleaned_lines: List[str] = []
+
+        for line in lines:
+            if not line:
+                cleaned_lines.append('')
+                continue
+
+            lowered = line.lower()
+            if lowered.startswith('subject:'):
+                continue
+            if lowered.startswith('dear hiring'):
+                continue
+            if lowered.startswith('warm regards') or lowered.startswith('best regards') or lowered.startswith('regards'):
+                continue
+            if lowered == full_name.lower():
+                continue
+            if (
+                lowered.startswith('phone:')
+                or lowered.startswith('email:')
+                or lowered.startswith('linkedin:')
+                or lowered.startswith('github:')
+            ):
+                continue
+            cleaned_lines.append(line)
+
+        text = '\n'.join(cleaned_lines).strip()
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        return text
 
     @staticmethod
     def _build_email_body_fallback(
@@ -568,63 +680,78 @@ Return JSON with this exact schema:
             or str(user_profile.get('name', '')).strip()
             or "Candidate"
         )
-        role = str(job_data.get('job_title', '')).strip() or "the role"
-        company = str(job_data.get('company_name', '')).strip() or "your company"
+        role = str(job_data.get('job_title', '')).strip() or "Software Developer"
+        company = str(job_data.get('company_name', '')).strip() or "your organization"
+        company_location = str(job_data.get('company_location', '')).strip()
         skills = user_profile.get('skills', []) if isinstance(user_profile.get('skills', []), list) else []
         top_skills = ", ".join([str(skill).strip() for skill in skills[:3] if str(skill).strip()])
         if not top_skills:
             top_skills = "software development, backend engineering, and problem solving"
 
         phone = str(user_profile.get('phone', '')).strip()
-        linkedin = str(user_profile.get('linkedin_url', '')).strip()
         email = str(user_profile.get('email', '')).strip()
+        location = str(user_profile.get('location', '')).strip()
+        portfolio = AIService._normalize_public_url(user_profile.get('portfolio_url', ''))
+        linkedin = AIService._normalize_public_url(user_profile.get('linkedin_url', ''))
+        github = AIService._normalize_public_url(user_profile.get('github_url', ''))
 
-        raw_body = str(existing_body or '').strip()
-        cleaned_lines: List[str] = []
-        for line in raw_body.splitlines():
-            stripped = line.strip()
-            lowered = stripped.lower()
-            if not stripped:
-                cleaned_lines.append('')
-                continue
-            if lowered.startswith('dear hiring manager') or lowered.startswith('dear hiring team'):
-                continue
-            if lowered.startswith('warm regards') or lowered.startswith('best regards'):
-                continue
-            if lowered == full_name.lower():
-                continue
-            cleaned_lines.append(stripped)
-        body = "\n".join(cleaned_lines).strip()
+        cleaned_ai_body = AIService._clean_email_body(existing_body, full_name=full_name)
+        opening = [
+            "Dear Hiring Team,",
+            "",
+            "I hope you are doing well.",
+            "",
+        ]
 
-        core = (
-            f"I am writing to apply for the {role} position at {company}. "
-            f"My background aligns well with this opportunity, especially in {top_skills}. "
-            f"I focus on building reliable, maintainable solutions and collaborating effectively to deliver impact.\n\n"
-            "I have attached my resume and can provide any additional information if needed. "
-            "I would welcome the opportunity to discuss how I can contribute to your team. "
-            "Thank you for your time and consideration.\n\n"
-            f"Warm regards,\n\n{full_name}"
+        intro_line = f"My name is {full_name}, and I am writing to apply for the {role} position at {company}"
+        if company_location:
+            intro_line = f"{intro_line}, {company_location}."
+        else:
+            intro_line = f"{intro_line}."
+
+        fallback_fit = (
+            f"I bring a strong foundation in {top_skills}. "
+            "I am confident in my ability to contribute through clean, maintainable implementation, "
+            "effective collaboration, and a consistent learning mindset."
         )
 
-        use_fallback = not body or len(" ".join(body.split()).split()) < 70
-        if use_fallback:
-            body_text = core
+        mid_sections = [intro_line]
+        if cleaned_ai_body:
+            mid_sections.append(cleaned_ai_body)
         else:
-            body_text = (
-                f"{body.strip()}\n\n"
-                f"Warm regards,\n\n{full_name}"
-            )
+            mid_sections.append(fallback_fit)
 
-        contact_lines = []
+        if portfolio:
+            mid_sections.append(f"You can also view my portfolio and project details at:\n{portfolio}")
+
+        closing_sections = [
+            "I have attached my updated resume for your review. I would be grateful for the opportunity "
+            "to participate in the selection process and discuss how I can contribute to your organization.",
+            "",
+            "Thank you for your time and consideration.",
+            "",
+            "Warm regards,",
+            full_name,
+        ]
+
+        if location:
+            closing_sections.append(location)
         if phone:
-            contact_lines.append(f"Phone: {phone}")
-        if linkedin:
-            contact_lines.append(f"LinkedIn: {linkedin}")
+            closing_sections.append(f"Phone: {phone}")
         if email:
-            contact_lines.append(f"Email: {email}")
-        contact_block = ("\n" + "\n".join(contact_lines)) if contact_lines else ""
+            closing_sections.append(f"Email: {email}")
+        if linkedin:
+            closing_sections.append(f"LinkedIn: {linkedin}")
+        if github:
+            closing_sections.append(f"GitHub: {github}")
 
-        return f"Dear Hiring Team,\n\n{body_text}{contact_block}"
+        return "\n".join(
+            opening
+            + [mid_sections[0], "", mid_sections[1]]
+            + (["", mid_sections[2]] if len(mid_sections) > 2 else [])
+            + ["", closing_sections[0], ""]
+            + closing_sections[2:]
+        )
 
     @staticmethod
     def _validate_application_docs_payload(
@@ -769,7 +896,7 @@ The "email_body" must start with "Dear Hiring Team," and contain only the email 
         for placeholder, replacement in replacement_map.items():
             rendered = rendered.replace(placeholder, replacement or '')
 
-        return rendered
+        return AIService._format_latex_for_readability(rendered)
 
     @staticmethod
     def _canonical_plain_text_section_key(title: str) -> Optional[str]:
@@ -1201,6 +1328,8 @@ Return JSON with this exact schema:
                 updated_headline=sanitized_headline,
             )
             headline_updated = True
+
+        updated_latex = AIService._format_latex_for_readability(updated_latex)
 
         raw_changes = payload.get('changes_made', [])
         if not isinstance(raw_changes, list):

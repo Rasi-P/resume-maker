@@ -275,14 +275,34 @@ class CoverLetterViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Optimized resume not found'}, status=status.HTTP_404_NOT_FOUND)
 
         try:
+            profile = Profile.objects.filter(user=request.user).first()
+            user_profile = {
+                'full_name': getattr(profile, 'full_name', '') or request.user.get_full_name() or request.user.username,
+                'email': getattr(profile, 'email', '') or request.user.email,
+                'phone': getattr(profile, 'phone', ''),
+                'location': getattr(profile, 'location', ''),
+                'linkedin_url': getattr(profile, 'linkedin_url', ''),
+                'github_url': getattr(profile, 'github_url', ''),
+            }
+            job_data = {
+                'job_title': optimized_resume.job_description.title,
+                'company_name': 'Company Name',
+                'company_location': 'Company Location',
+            }
+
             content = AIService.generate_cover_letter(
                 optimized_resume.optimized_content,
                 optimized_resume.job_description.content,
                 optimized_resume.job_description.title,
             )
+            content = AIService.format_cover_letter_template(
+                user_profile=user_profile,
+                job_data=job_data,
+                body_text=content,
+            )
             pdf_file = PDFService.generate_cover_letter_pdf(
                 content,
-                optimized_resume.optimized_content.get('name', 'Your Name'),
+                '',
             )
 
             cover_letter = CoverLetter.objects.create(
@@ -493,12 +513,10 @@ class ResumeOptimizerViewSet(viewsets.GenericViewSet):
         return f"data:{mime_type};charset=utf-8;base64,{encoded}"
 
     def _build_cover_letter_exports(self, content, user_profile, ai_changes):
-        candidate_name = str(user_profile.get('full_name', '')).strip() or "Candidate"
-
         try:
             cover_letter_pdf_buffer = PDFService.generate_cover_letter_pdf_via_latex(
                 content=content,
-                name=candidate_name,
+                name='',
             )
             cover_letter_pdf = self._buffer_to_data_url(cover_letter_pdf_buffer, mime_type='application/pdf')
         except Exception as exc:
@@ -507,7 +525,7 @@ class ResumeOptimizerViewSet(viewsets.GenericViewSet):
                 "LaTeX cover letter compilation failed on server. Generated a fallback text PDF."
             )
             fallback_pdf_buffer = PDFService.generate_text_pdf(
-                title="Cover Letter",
+                title="",
                 content=content,
             )
             cover_letter_pdf = self._buffer_to_data_url(
@@ -517,7 +535,7 @@ class ResumeOptimizerViewSet(viewsets.GenericViewSet):
 
         cover_letter_docx_buffer = PDFService.generate_cover_letter_docx(
             content=content,
-            name=candidate_name,
+            name='',
         )
         cover_letter_docx = self._buffer_to_data_url(
             cover_letter_docx_buffer,
