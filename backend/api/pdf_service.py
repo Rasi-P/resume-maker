@@ -1,7 +1,4 @@
 import logging
-import os
-import shutil
-import subprocess
 import tempfile
 from io import BytesIO
 from pathlib import Path
@@ -13,128 +10,34 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
+from .latex_compiler import compile_latex
+
 logger = logging.getLogger(__name__)
 
 
 class PDFService:
-    LATEX_COMPILERS = ('tectonic', 'xelatex', 'pdflatex')
-
-    @staticmethod
-    def _find_latex_compiler():
-        compiler_candidates = ["tectonic", "xelatex", "pdflatex"]
-        override_path = os.getenv('LATEX_COMPILER_PATH', '').strip()
-        if override_path:
-            candidate = Path(override_path)
-            if candidate.exists():
-                compiler_name = candidate.stem.lower().replace('.exe', '')
-                return compiler_name, str(candidate)
-
-        for compiler in compiler_candidates:
-            compiler_path = shutil.which(compiler)
-            if compiler_path:
-                return compiler, compiler_path
-
-        local_app_data = os.getenv('LOCALAPPDATA', '')
-        candidate_dirs = [
-            Path('C:/Users/aleen/Downloads/tectonic-0.15.0+20251006-x86_64-pc-windows-msvc'),
-            Path(local_app_data) / 'Programs' / 'MiKTeX' / 'miktex' / 'bin' / 'x64',
-            Path('C:/Program Files/MiKTeX/miktex/bin/x64'),
-            Path('C:/texlive/2026/bin/windows'),
-            Path('C:/texlive/2025/bin/windows'),
-            Path('C:/texlive/2024/bin/windows'),
-        ]
-
-        for directory in candidate_dirs:
-            if not directory.exists():
-                continue
-
-            for compiler in compiler_candidates:
-                executable = directory / f'{compiler}.exe'
-                if executable.exists():
-                    return compiler, str(executable)
-
-        return None, None
-
     @staticmethod
     def compile_latex_to_pdf(latex_text, timeout_seconds=180):
         """Compile LaTeX source into a PDF (Overleaf-like build)."""
         if not latex_text or not str(latex_text).strip():
             raise ValueError("LaTeX content is empty")
 
-        compiler, compiler_path = PDFService._find_latex_compiler()
-        if not compiler or not compiler_path:
-            raise ValueError(
-                "No LaTeX compiler found on server. Install tectonic, xelatex, or pdflatex."
-            )
-
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
                 temp_path = Path(temp_dir)
                 tex_path = temp_path / 'resume.tex'
-                pdf_path = temp_path / 'resume.pdf'
-
                 tex_path.write_text(latex_text, encoding='utf-8')
-
-                if compiler == 'tectonic':
-                    command = [compiler_path, "resume.tex"]
-                    run_kwargs = {
-                        'cwd': temp_dir,
-                        'stdout': subprocess.PIPE,
-                        'stderr': subprocess.STDOUT,
-                        'text': True,
-                        'timeout': timeout_seconds,
-                        'check': False,
-                    }
-                else:
-                    command = [
-                        compiler_path,
-                        '-interaction=nonstopmode',
-                        '-halt-on-error',
-                        '-file-line-error',
-                        '-output-directory',
-                        str(temp_path),
-                        str(tex_path),
-                    ]
-                    run_kwargs = {
-                        'stdout': subprocess.PIPE,
-                        'stderr': subprocess.STDOUT,
-                        'text': True,
-                        'timeout': timeout_seconds,
-                        'check': False,
-                    }
-
-                result = subprocess.run(command, **run_kwargs)
-
-                if result.returncode != 0 or not pdf_path.exists():
-                    log_excerpt = (result.stdout or '').strip()
-                    if len(log_excerpt) > 800:
-                        log_excerpt = log_excerpt[-800:]
-                    if (
-                        compiler == 'tectonic'
-                        and (
-                            'Fontconfig error' in log_excerpt
-                            or result.returncode == 3221226356
-                        )
-                    ):
-                        raise ValueError(
-                            "Tectonic crashed due local font/runtime configuration. "
-                            "Install MiKTeX/TeXLive and set LATEX_COMPILER_PATH to xelatex.exe or pdflatex.exe."
-                        )
-                    raise ValueError(
-                        f"LaTeX compile failed with {compiler} (exit {result.returncode}). "
-                        f"Output: {log_excerpt or 'No compiler output.'}"
+                pdf_path = Path(
+                    compile_latex(
+                        tex_path=str(tex_path),
+                        output_dir=str(temp_path),
+                        timeout_seconds=timeout_seconds,
                     )
+                )
 
                 pdf_buffer = BytesIO(pdf_path.read_bytes())
                 pdf_buffer.seek(0)
                 return pdf_buffer
-        except subprocess.TimeoutExpired:
-            raise ValueError("LaTeX compilation timed out")
-        except FileNotFoundError:
-            raise ValueError(
-                f"LaTeX compiler executable not found: {compiler_path}. "
-                "Install a compiler and/or set LATEX_COMPILER_PATH."
-            )
         except Exception as e:
             logger.error(f"Error compiling LaTeX to PDF: {str(e)}")
             raise

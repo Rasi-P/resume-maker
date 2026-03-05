@@ -521,6 +521,7 @@ class ResumeOptimizerViewSet(viewsets.GenericViewSet):
             cover_letter_pdf = self._buffer_to_data_url(cover_letter_pdf_buffer, mime_type='application/pdf')
         except Exception as exc:
             logger.warning(f"LaTeX cover letter PDF compilation failed: {str(exc)}")
+            logger.warning("Falling back to text-based PDF for cover letter.")
             ai_changes.append(
                 "LaTeX cover letter compilation failed on server. Generated a fallback text PDF."
             )
@@ -637,6 +638,7 @@ class ResumeOptimizerViewSet(viewsets.GenericViewSet):
                     resume_pdf = self._buffer_to_data_url(resume_pdf_buffer, mime_type='application/pdf')
                 except Exception as exc:
                     logger.warning(f"LaTeX resume PDF compilation failed: {str(exc)}")
+                    logger.warning("Falling back to text-based PDF for resume.")
                     ai_changes = ai_changes + [
                         "LaTeX PDF compilation failed on server. Generated a fallback text PDF."
                     ]
