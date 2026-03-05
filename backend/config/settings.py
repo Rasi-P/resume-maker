@@ -192,3 +192,8 @@ LOGGING = {
 # }
 REST_FRAMEWORK['DEFAULT_PAGINATION_CLASS'] = 'rest_framework.pagination.PageNumberPagination'
 REST_FRAMEWORK['PAGE_SIZE'] = 10
+
+
+DEBUG = False
+ALLOWED_HOSTS = ["*"]
+CORS_ALLOW_ALL_ORIGINS = True
