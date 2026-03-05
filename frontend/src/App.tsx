@@ -5,25 +5,13 @@ import { ProfileView } from './pages/ProfileView';
 import { Certifications } from './pages/Certifications';
 import { Home } from './pages/Home';
 import { Auth } from './pages/Auth';
-import { isAuthenticated } from './utils/auth';
 
 function App() {
   return (
     <Router>
       <Routes>
-        <Route
-          path="/login"
-          element={isAuthenticated() ? <Navigate to="/resume-optimizer" replace /> : <Auth />}
-        />
-        <Route
-          path="/"
-          element={
-            <Navigate
-              to={isAuthenticated() ? '/resume-optimizer' : '/login'}
-              replace
-            />
-          }
-        />
+        <Route path="/login" element={<Auth />} />
+        <Route path="/" element={<Navigate to="/login" replace />} />
         <Route
           path="/resume-optimizer"
           element={
