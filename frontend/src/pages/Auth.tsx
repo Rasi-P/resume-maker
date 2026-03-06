@@ -68,7 +68,14 @@ export const Auth: React.FC = () => {
     };
 
   const handleLogin = async () => {
-    await authService.login(formState.username.trim(), formState.password);
+    const username = formState.username.trim();
+    const password = formState.password;
+
+    if (!username || !password) {
+      throw new Error('Username and password are required.');
+    }
+
+    await authService.login(username, password);
     navigate('/resume-optimizer', { replace: true });
   };
 

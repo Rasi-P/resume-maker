@@ -13,14 +13,48 @@ def get_bool_env(name: str, default: bool = False) -> bool:
     return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
+def resolve_env_reference(value: str) -> str:
+    token = value.strip()
+    if token.startswith('${{') and token.endswith('}}'):
+        env_name = token[3:-2].strip()
+        return os.getenv(env_name, '').strip()
+    return token
+
+
 def get_list_env(name: str, default: str = '') -> list[str]:
-    return [item.strip() for item in os.getenv(name, default).split(',') if item.strip()]
+    return [
+        resolved
+        for item in os.getenv(name, default).split(',')
+        for resolved in [resolve_env_reference(item)]
+        if resolved
+    ]
+
+
+def normalize_origin(value: str) -> str:
+    return resolve_env_reference(value).strip('"').strip("'").rstrip('/')
+
+
+PLACEHOLDER_ORIGINS = {'https://your-frontend-domain.vercel.app'}
+
+
+def get_origin_list_env(name: str, default: str = '') -> list[str]:
+    return [
+        origin
+        for item in get_list_env(name, default)
+        for origin in [normalize_origin(item)]
+        if origin and origin not in PLACEHOLDER_ORIGINS
+    ]
 
 SECRET_KEY = os.getenv('SECRET_KEY')
 if not SECRET_KEY:
     raise ValueError('SECRET_KEY environment variable is required')
 DEBUG = get_bool_env('DEBUG', False)
-ALLOWED_HOSTS = get_list_env('ALLOWED_HOSTS', 'localhost,127.0.0.1')
+DEFAULT_ALLOWED_HOSTS = ['.up.railway.app', 'localhost', '127.0.0.1']
+configured_allowed_hosts = get_list_env('ALLOWED_HOSTS', '')
+if '*' in configured_allowed_hosts:
+    ALLOWED_HOSTS = ['*']
+else:
+    ALLOWED_HOSTS = list(dict.fromkeys(configured_allowed_hosts + DEFAULT_ALLOWED_HOSTS))
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -118,21 +152,19 @@ SIMPLE_JWT = {
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
 }
 
+DEFAULT_FRONTEND_ORIGIN = normalize_origin(
+    os.getenv('FRONTEND_ORIGIN', 'https://resume-maker-three-omega.vercel.app')
+)
+
 CORS_ALLOW_ALL_ORIGINS = get_bool_env('CORS_ALLOW_ALL_ORIGINS', False)
-CORS_ALLOWED_ORIGINS = get_list_env(
-    'CORS_ALLOWED_ORIGINS',
-    'https://resume-maker-three-omega.vercel.app'
-)
-CORS_ALLOWED_ORIGIN_REGEXES = (
-    [
-        r"^http://localhost:\d+$",
-        r"^http://127\.0\.0\.1:\d+$",
-    ]
-    if DEBUG
-    else []
-)
+CORS_ALLOWED_ORIGINS = get_origin_list_env('CORS_ALLOWED_ORIGINS', DEFAULT_FRONTEND_ORIGIN)
+if not CORS_ALLOWED_ORIGINS and DEFAULT_FRONTEND_ORIGIN:
+    CORS_ALLOWED_ORIGINS = [DEFAULT_FRONTEND_ORIGIN]
+
+default_origin_regexes = r"^http://localhost:\d+$,^http://127\.0\.0\.1:\d+$" if DEBUG else ''
+CORS_ALLOWED_ORIGIN_REGEXES = get_list_env('CORS_ALLOWED_ORIGIN_REGEXES', default_origin_regexes)
 CORS_ALLOW_CREDENTIALS = True
-CSRF_TRUSTED_ORIGINS = get_list_env('CSRF_TRUSTED_ORIGINS', '')
+CSRF_TRUSTED_ORIGINS = get_origin_list_env('CSRF_TRUSTED_ORIGINS', ','.join(CORS_ALLOWED_ORIGINS))
 
 GROQ_API_KEY = os.getenv('GROQ_API_KEY')
 OPENAI_API_KEY = GROQ_API_KEY or os.getenv('OPENAI_API_KEY')
