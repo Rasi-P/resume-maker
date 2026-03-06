@@ -121,7 +121,7 @@ SIMPLE_JWT = {
 CORS_ALLOW_ALL_ORIGINS = get_bool_env('CORS_ALLOW_ALL_ORIGINS', False)
 CORS_ALLOWED_ORIGINS = get_list_env(
     'CORS_ALLOWED_ORIGINS',
-    'http://localhost:5173,http://localhost:5174,http://localhost:3000'
+    'https://resume-maker-three-omega.vercel.app'
 )
 CORS_ALLOWED_ORIGIN_REGEXES = (
     [
