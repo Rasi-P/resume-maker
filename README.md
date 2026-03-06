@@ -175,5 +175,14 @@ Supporting routes:
   - Provide fuller JD content.
 
 - `No LaTeX compiler found`
-  - Install `tectonic`, `xelatex`, or `pdflatex`, or set `LATEX_COMPILER_PATH`.
+  - Install `tectonic`, `xelatex`, `lualatex`, or `pdflatex`.
+  - On Railway, set `LATEX_COMPILER=tectonic`.
+  - If `LATEX_COMPILER_PATH` is set, make sure it is a valid path inside the Linux container (do not use Windows paths like `C:\...`).
   - If compile fails, backend falls back to text-based PDF where supported.
+
+- `LaTeX works locally but fails on Railway`
+  - Confirm `nixpacks.toml` includes `aptPkgs = ["tectonic"]`.
+  - In Railway variables:
+    - `LATEX_COMPILER=tectonic`
+    - `LATEX_COMPILER_PATH=` (empty, unless you provide a valid Linux path)
+  - Redeploy and check logs for `Using LaTeX compiler: ...`.

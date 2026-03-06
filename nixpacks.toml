@@ -2,7 +2,7 @@
 aptPkgs = ["tectonic"]
 
 [phases.install]
-cmds = ["pip install -r backend/requirements.txt"]
+cmds = ["pip install -r backend/requirements.txt", "tectonic --version"]
 
 [start]
 cmd = "cd backend && gunicorn config.wsgi:application --bind 0.0.0.0:$PORT"
