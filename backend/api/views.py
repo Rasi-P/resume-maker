@@ -358,6 +358,23 @@ class ResumeOptimizerViewSet(viewsets.GenericViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = ResumeOptimizerRequestSerializer
 
+    @action(detail=False, methods=['get'], permission_classes=[AllowAny])
+    def debug_latex(self, request):
+        import subprocess
+        import shutil
+        info = {}
+        for compiler in ['tectonic', 'xelatex', 'lualatex', 'pdflatex']:
+            path = shutil.which(compiler)
+            if path:
+                try:
+                    result = subprocess.run([compiler, '--version'], capture_output=True, text=True, timeout=5)
+                    info[compiler] = {'path': path, 'version': result.stdout[:200]}
+                except Exception as e:
+                    info[compiler] = {'path': path, 'error': str(e)}
+            else:
+                info[compiler] = None
+        return Response(info)
+
     @staticmethod
     def _flatten_validation_errors(errors):
         if isinstance(errors, dict):
