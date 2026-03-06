@@ -1,9 +1,12 @@
+from io import BytesIO
 from unittest.mock import patch
 
+from django.test import override_settings
 from django.test import SimpleTestCase
 
 from .ai_service import AIService
 from .pdf_service import PDFService
+from .views import ResumeOptimizerViewSet
 
 
 class PlainTextSectionLockTests(SimpleTestCase):
@@ -196,6 +199,66 @@ class PDFLatexPreprocessingTests(SimpleTestCase):
         self.assertNotIn("\\faPhone", cleaned)
         self.assertNotIn("\\faLinkedin", cleaned)
         self.assertIn("+91 9999999999", cleaned)
+
+
+class StrictLatexModeTests(SimpleTestCase):
+    @override_settings(LATEX_STRICT_MODE=True)
+    @patch('api.views.PDFService.generate_text_pdf')
+    @patch(
+        'api.views.PDFService.generate_cover_letter_pdf_via_latex',
+        side_effect=RuntimeError('compile failed'),
+    )
+    def test_cover_letter_export_raises_without_fallback_when_strict_mode_enabled(
+        self,
+        _mock_cover_letter_latex,
+        mock_generate_text_pdf,
+    ):
+        view = ResumeOptimizerViewSet()
+
+        with self.assertRaises(RuntimeError):
+            view._build_cover_letter_exports(
+                content="Body content",
+                user_profile={},
+                ai_changes=[],
+            )
+
+        mock_generate_text_pdf.assert_not_called()
+
+    @override_settings(LATEX_STRICT_MODE=False)
+    @patch(
+        'api.views.PDFService.generate_cover_letter_docx',
+        return_value=BytesIO(b'PKDOCX'),
+    )
+    @patch(
+        'api.views.PDFService.generate_text_pdf',
+        return_value=BytesIO(b'%PDF-fallback'),
+    )
+    @patch(
+        'api.views.PDFService.generate_cover_letter_pdf_via_latex',
+        side_effect=RuntimeError('compile failed'),
+    )
+    def test_cover_letter_export_uses_fallback_when_strict_mode_disabled(
+        self,
+        _mock_cover_letter_latex,
+        _mock_generate_text_pdf,
+        _mock_generate_cover_letter_docx,
+    ):
+        view = ResumeOptimizerViewSet()
+        changes = []
+
+        cover_letter_pdf, cover_letter_docx = view._build_cover_letter_exports(
+            content="Body content",
+            user_profile={},
+            ai_changes=changes,
+        )
+
+        self.assertTrue(cover_letter_pdf.startswith('data:application/pdf;base64,'))
+        self.assertTrue(
+            cover_letter_docx.startswith(
+                'data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,'
+            )
+        )
+        self.assertTrue(any('fallback text PDF' in change for change in changes))
 
 
 class ApplicationDocsPromptTests(SimpleTestCase):

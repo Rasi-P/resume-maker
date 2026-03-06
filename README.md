@@ -135,6 +135,7 @@ Use `backend/.env.example` and set at minimum:
 - `AI_MODEL`
 - `REDIS_URL` (if using Celery)
 - `CORS_ALLOWED_ORIGINS`
+- `LATEX_STRICT_MODE` (optional; set `True` to disable fallback text PDF when LaTeX compile fails)
 
 ### Frontend (`frontend/.env`)
 - `VITE_API_BASE_URL=http://localhost:8000`
@@ -185,4 +186,5 @@ Supporting routes:
   - In Railway variables:
     - `LATEX_COMPILER=tectonic`
     - `LATEX_COMPILER_PATH=` (empty, unless you provide a valid Linux path)
+    - `LATEX_STRICT_MODE=True` (optional; fail fast instead of fallback PDF)
   - Redeploy and check logs for `Using LaTeX compiler: ...`.

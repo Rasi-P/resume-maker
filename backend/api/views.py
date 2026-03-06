@@ -1,6 +1,7 @@
 import logging
 import base64
 
+from django.conf import settings
 from django.core.files.base import ContentFile
 from django.utils import timezone
 from profiles.models import Profile
@@ -558,6 +559,11 @@ class ResumeOptimizerViewSet(viewsets.GenericViewSet):
             cover_letter_pdf = self._buffer_to_data_url(cover_letter_pdf_buffer, mime_type='application/pdf')
         except Exception as exc:
             logger.warning(f"LaTeX cover letter PDF compilation failed: {str(exc)}")
+            if settings.LATEX_STRICT_MODE:
+                raise RuntimeError(
+                    f"LaTeX cover letter PDF compilation failed on server: {str(exc)}. "
+                    "Strict mode is enabled, so fallback PDF generation is disabled."
+                ) from exc
             logger.warning("Falling back to text-based PDF for cover letter.")
             ai_changes.append(
                 "LaTeX cover letter compilation failed on server. Generated a fallback text PDF."
@@ -675,6 +681,11 @@ class ResumeOptimizerViewSet(viewsets.GenericViewSet):
                     resume_pdf = self._buffer_to_data_url(resume_pdf_buffer, mime_type='application/pdf')
                 except Exception as exc:
                     logger.warning(f"LaTeX resume PDF compilation failed: {str(exc)}")
+                    if settings.LATEX_STRICT_MODE:
+                        raise RuntimeError(
+                            f"LaTeX resume PDF compilation failed on server: {str(exc)}. "
+                            "Strict mode is enabled, so fallback PDF generation is disabled."
+                        ) from exc
                     logger.warning("Falling back to text-based PDF for resume.")
                     ai_changes = ai_changes + [
                         "LaTeX PDF compilation failed on server. Generated a fallback text PDF."
@@ -784,6 +795,12 @@ class ResumeOptimizerViewSet(viewsets.GenericViewSet):
             return self._error_response(
                 message=str(exc),
                 status_code=status.HTTP_502_BAD_GATEWAY,
+            )
+        except RuntimeError as exc:
+            logger.error(f"Runtime error in optimizer generate: {str(exc)}")
+            return self._error_response(
+                message=str(exc),
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
         except ValueError as exc:
             logger.error(f"Validation error in optimizer generate: {str(exc)}")
