@@ -155,8 +155,18 @@ export const Home: React.FC = () => {
       setShowDiff(false);
       setDiffMode('summary');
     } catch (error: any) {
-      const message = error.response?.data?.error || 'Failed to generate optimized documents';
-      alert(message);
+      const status = error?.response?.status;
+      const apiError = error?.response?.data;
+      const message =
+        (typeof apiError?.error === 'string' && apiError.error.trim()) ||
+        (status === 500
+          ? 'Server error while generating documents. Please retry in a few seconds.'
+          : 'Failed to generate optimized documents');
+      const details =
+        typeof apiError?.details === 'string' && apiError.details.trim()
+          ? apiError.details.trim()
+          : '';
+      alert(details ? `${message}\n\n${details}` : message);
       console.error('Optimizer generation error:', error);
     } finally {
       setLoadingGenerate(false);

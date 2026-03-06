@@ -389,13 +389,42 @@ class ResumeOptimizerViewSet(viewsets.GenericViewSet):
             payload['details'] = details
         return Response(payload, status=status_code)
 
+    @staticmethod
+    def _file_exists(file_field) -> bool:
+        if not file_field:
+            return False
+        file_name = getattr(file_field, 'name', '')
+        if not file_name:
+            return False
+        try:
+            return bool(file_field.storage.exists(file_name))
+        except Exception:
+            return False
+
+    @staticmethod
+    def _missing_resume_message(resume_id=None) -> str:
+        if resume_id is None:
+            return (
+                "No accessible dashboard .tex resume found on server. "
+                "Please re-upload your .tex resume in Dashboard and try again."
+            )
+        return (
+            f"Selected resume #{resume_id} file is not available on server. "
+            "Please re-upload that .tex resume in Dashboard and retry."
+        )
+
     def _extract_resume_source(self, resume):
         if resume.latex_file:
-            resume.latex_file.open('rb')
+            if not self._file_exists(resume.latex_file):
+                raise ValueError(self._missing_resume_message(resume.id))
             try:
-                latex_text = PDFService.extract_text(resume.latex_file)
-            finally:
-                resume.latex_file.close()
+                resume.latex_file.open('rb')
+                try:
+                    latex_text = PDFService.extract_text(resume.latex_file)
+                finally:
+                    resume.latex_file.close()
+            except (FileNotFoundError, OSError, ValueError) as exc:
+                raise ValueError(self._missing_resume_message(resume.id)) from exc
 
             plain_text = AIService.latex_to_plain_text(latex_text)
             if not plain_text or len(plain_text.strip()) < 30:
@@ -408,11 +437,16 @@ class ResumeOptimizerViewSet(viewsets.GenericViewSet):
             }
 
         if resume.original_file:
-            resume.original_file.open('rb')
+            if not self._file_exists(resume.original_file):
+                raise ValueError(self._missing_resume_message(resume.id))
             try:
-                plain_text = PDFService.extract_text(resume.original_file)
-            finally:
-                resume.original_file.close()
+                resume.original_file.open('rb')
+                try:
+                    plain_text = PDFService.extract_text(resume.original_file)
+                finally:
+                    resume.original_file.close()
+            except (FileNotFoundError, OSError, ValueError) as exc:
+                raise ValueError(self._missing_resume_message(resume.id)) from exc
 
             if not plain_text or len(plain_text.strip()) < 50:
                 raise ValueError("Resume content is too short")
@@ -458,18 +492,21 @@ class ResumeOptimizerViewSet(viewsets.GenericViewSet):
 
         if resume_id:
             resume = Resume.objects.get(id=resume_id, user=user)
+            if not self._file_exists(resume.latex_file):
+                raise ValueError(self._missing_resume_message(resume.id))
         else:
-            resume = (
+            resume_candidates = (
                 Resume.objects
                 .filter(user=user, latex_file__isnull=False)
                 .exclude(latex_file='')
                 .order_by('-created_at')
-                .first()
+            )
+            resume = next(
+                (candidate for candidate in resume_candidates if self._file_exists(candidate.latex_file)),
+                None,
             )
             if not resume:
-                raise ValueError(
-                    "No dashboard .tex resume found. Upload your base .tex resume in Dashboard first."
-                )
+                raise ValueError(self._missing_resume_message())
 
         source = self._extract_resume_source(resume)
         if not source['is_latex']:
@@ -755,10 +792,11 @@ class ResumeOptimizerViewSet(viewsets.GenericViewSet):
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
         except Exception as exc:
-            logger.error(f"Error in optimizer generate: {str(exc)}")
+            logger.exception(f"Error in optimizer generate: {str(exc)}")
             return self._error_response(
                 message='Failed to generate job-specific documents. Please try again.',
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                details='A server error occurred while processing the resume.',
             )
 
         return Response({'document': document_payload}, status=status.HTTP_201_CREATED)
