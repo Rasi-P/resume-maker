@@ -1,4 +1,5 @@
 import logging
+import re
 import tempfile
 from io import BytesIO
 from pathlib import Path
@@ -17,27 +18,73 @@ logger = logging.getLogger(__name__)
 
 class PDFService:
     @staticmethod
+    def _remove_glyph_to_unicode_lines(latex_text: str) -> str:
+        cleaned = re.sub(r'^\s*\\input\{glyphtounicode\}\s*$', '', latex_text, flags=re.MULTILINE)
+        cleaned = re.sub(r'^\s*\\pdfgentounicode\s*=\s*1\s*$', '', cleaned, flags=re.MULTILINE)
+        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+        return cleaned
+
+    @staticmethod
+    def _remove_fontawesome_dependency(latex_text: str) -> str:
+        cleaned = re.sub(
+            r'^\s*\\usepackage(?:\[[^\]]*\])?\{fontawesome5\}\s*$',
+            '',
+            latex_text,
+            flags=re.MULTILINE,
+        )
+        # Replace common icon commands with plain spacing so contact text remains readable.
+        cleaned = re.sub(r'\\fa[A-Za-z]+\s*\\?', ' ', cleaned)
+        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+        return cleaned
+
+    @staticmethod
     def compile_latex_to_pdf(latex_text, timeout_seconds=180):
         """Compile LaTeX source into a PDF (Overleaf-like build)."""
         if not latex_text or not str(latex_text).strip():
             raise ValueError("LaTeX content is empty")
 
-        try:
-            with tempfile.TemporaryDirectory() as temp_dir:
-                temp_path = Path(temp_dir)
-                tex_path = temp_path / 'resume.tex'
-                tex_path.write_text(latex_text, encoding='utf-8')
-                pdf_path = Path(
-                    compile_latex(
-                        tex_path=str(tex_path),
-                        output_dir=str(temp_path),
-                        timeout_seconds=timeout_seconds,
-                    )
-                )
+        source_text = str(latex_text)
+        candidates: list[tuple[str, str]] = [('original', source_text)]
+        if r'\input{glyphtounicode}' in source_text or r'\pdfgentounicode=1' in source_text:
+            candidates.append(('without_glyph_to_unicode', PDFService._remove_glyph_to_unicode_lines(source_text)))
+        if r'\usepackage{fontawesome5}' in source_text or r'\fa' in source_text:
+            candidates.append(('without_fontawesome', PDFService._remove_fontawesome_dependency(source_text)))
+        if len(candidates) > 1:
+            candidates.append((
+                'without_glyph_to_unicode_and_fontawesome',
+                PDFService._remove_fontawesome_dependency(PDFService._remove_glyph_to_unicode_lines(source_text)),
+            ))
 
-                pdf_buffer = BytesIO(pdf_path.read_bytes())
-                pdf_buffer.seek(0)
-                return pdf_buffer
+        last_error: Exception | None = None
+        try:
+            for variant_name, candidate_text in candidates:
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    temp_path = Path(temp_dir)
+                    tex_path = temp_path / 'resume.tex'
+                    tex_path.write_text(candidate_text, encoding='utf-8')
+                    try:
+                        pdf_path = Path(
+                            compile_latex(
+                                tex_path=str(tex_path),
+                                output_dir=str(temp_path),
+                                timeout_seconds=timeout_seconds,
+                            )
+                        )
+                    except Exception as exc:
+                        logger.warning("LaTeX compile attempt failed (%s): %s", variant_name, str(exc))
+                        last_error = exc
+                        continue
+
+                    if variant_name != 'original':
+                        logger.warning("LaTeX compile succeeded after fallback variant: %s", variant_name)
+
+                    pdf_buffer = BytesIO(pdf_path.read_bytes())
+                    pdf_buffer.seek(0)
+                    return pdf_buffer
+
+            if last_error:
+                raise last_error
+            raise RuntimeError("LaTeX compilation failed for all variants.")
         except Exception as e:
             logger.error(f"Error compiling LaTeX to PDF: {str(e)}")
             raise

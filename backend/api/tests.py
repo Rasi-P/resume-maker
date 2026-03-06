@@ -170,6 +170,34 @@ class CoverLetterExportTests(SimpleTestCase):
         self.assertTrue(raw.startswith(b"PK"))
 
 
+class PDFLatexPreprocessingTests(SimpleTestCase):
+    def test_remove_glyph_to_unicode_lines(self):
+        source = (
+            "\\usepackage{hyperref}\n"
+            "\\input{glyphtounicode}\n"
+            "\\pdfgentounicode=1\n"
+            "\\begin{document}\n"
+            "Hello\n"
+            "\\end{document}\n"
+        )
+        cleaned = PDFService._remove_glyph_to_unicode_lines(source)
+        self.assertNotIn("\\input{glyphtounicode}", cleaned)
+        self.assertNotIn("\\pdfgentounicode=1", cleaned)
+        self.assertIn("\\begin{document}", cleaned)
+
+    def test_remove_fontawesome_dependency(self):
+        source = (
+            "\\usepackage{fontawesome5}\n"
+            "\\faPhone\\ +91 9999999999\n"
+            "\\faLinkedin\\ linkedin.com/in/sample\n"
+        )
+        cleaned = PDFService._remove_fontawesome_dependency(source)
+        self.assertNotIn("\\usepackage{fontawesome5}", cleaned)
+        self.assertNotIn("\\faPhone", cleaned)
+        self.assertNotIn("\\faLinkedin", cleaned)
+        self.assertIn("+91 9999999999", cleaned)
+
+
 class ApplicationDocsPromptTests(SimpleTestCase):
     @patch('api.ai_service.AIService._call_openai_with_retry')
     def test_generate_application_documents_includes_day6_cover_letter_instructions(self, mock_ai_call):

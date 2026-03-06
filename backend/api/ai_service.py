@@ -1261,7 +1261,7 @@ The "email_body" must start with "Dear Hiring Team," and contain only the email 
             r'\n\1\n',
             text,
         )
-        text = re.sub(r'\\begin\{[^}]+\}(?:\[[^\]]*\])?', ' ', text)
+        text = re.sub(r'\\begin\{[^}]+\}(?:\[[^\]]*\])?(?:\{[^{}]*\})*', ' ', text)
         text = re.sub(r'\\end\{[^}]+\}', ' ', text)
 
         for _ in range(8):
@@ -1275,6 +1275,7 @@ The "email_body" must start with "Dear Hiring Team," and contain only the email 
             text = updated
 
         text = re.sub(r'\\[a-zA-Z@]+\*?(?:\[[^\]]*\])?', ' ', text)
+        text = re.sub(r'\\+', ' ', text)
         text = re.sub(r'\[[^\]\n]{1,160}\]', ' ', text)
         text = text.replace('{', ' ').replace('}', ' ')
         text = re.sub(r'[ \t]+', ' ', text)
