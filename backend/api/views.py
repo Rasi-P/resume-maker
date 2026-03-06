@@ -1,5 +1,6 @@
 import logging
 import base64
+import os
 
 from django.conf import settings
 from django.core.files.base import ContentFile
@@ -20,6 +21,7 @@ from .models import (
     Resume,
 )
 from .pdf_service import PDFService
+from .latex_compiler import detect_latex_compiler, COMPILER_PRIORITY, COMPILER_PATH_HINTS
 from .serializers import (
     CoverLetterListSerializer,
     CoverLetterSerializer,
@@ -361,18 +363,39 @@ class ResumeOptimizerViewSet(viewsets.GenericViewSet):
     @action(detail=False, methods=['get'], permission_classes=[AllowAny])
     def debug_latex(self, request):
         import subprocess
-        import shutil
         info = {}
-        for compiler in ['tectonic', 'xelatex', 'lualatex', 'pdflatex']:
-            path = shutil.which(compiler)
+        detected = detect_latex_compiler()
+        info['detected'] = {
+            'path': detected[0] if detected else None,
+            'kind': detected[1] if detected else None,
+        }
+        info['env'] = {
+            'LATEX_COMPILER': os.getenv('LATEX_COMPILER'),
+            'LATEX_COMPILER_PATH': os.getenv('LATEX_COMPILER_PATH'),
+            'PATH': os.getenv('PATH'),
+        }
+
+        for compiler in COMPILER_PRIORITY:
+            candidate_paths = list(COMPILER_PATH_HINTS.get(compiler, ()))
+            resolved_path = None
+            for candidate_path in candidate_paths:
+                if os.path.isfile(candidate_path) and os.access(candidate_path, os.X_OK):
+                    resolved_path = candidate_path
+                    break
+
+            path = resolved_path
             if path:
                 try:
-                    result = subprocess.run([compiler, '--version'], capture_output=True, text=True, timeout=5)
-                    info[compiler] = {'path': path, 'version': result.stdout[:200]}
+                    result = subprocess.run([path, '--version'], capture_output=True, text=True, timeout=5)
+                    info[compiler] = {
+                        'path': path,
+                        'version': result.stdout[:200],
+                        'hint_paths': candidate_paths,
+                    }
                 except Exception as e:
-                    info[compiler] = {'path': path, 'error': str(e)}
+                    info[compiler] = {'path': path, 'error': str(e), 'hint_paths': candidate_paths}
             else:
-                info[compiler] = None
+                info[compiler] = {'path': None, 'hint_paths': candidate_paths}
         return Response(info)
 
     @staticmethod

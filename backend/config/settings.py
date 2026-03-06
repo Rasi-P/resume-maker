@@ -3,13 +3,35 @@ from pathlib import Path
 from datetime import timedelta
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(interpolate=False)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def get_env(name: str, default: str | None = None) -> str | None:
+    value = os.getenv(name, default)
+    if value is None:
+        return None
+    return resolve_env_reference(str(value)).strip().strip('"').strip("'")
+
+
+def get_db_env(name: str) -> str | None:
+    raw_value = os.getenv(name, '')
+    resolved_value = get_env(name, '')
+    if resolved_value:
+        return resolved_value
+
+    raw_token = str(raw_value).strip()
+    if raw_token.startswith('${{') and raw_token.endswith('}}'):
+        raise ValueError(
+            f"{name} contains an unresolved Railway reference ({raw_token}). "
+            f"Set a real local value in backend/.env or define the referenced variable before starting Django."
+        )
+    return resolved_value or None
+
+
 def get_bool_env(name: str, default: bool = False) -> bool:
-    value = os.getenv(name, str(default))
+    value = get_env(name, str(default))
     return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
@@ -45,7 +67,7 @@ def get_origin_list_env(name: str, default: str = '') -> list[str]:
         if origin and origin not in PLACEHOLDER_ORIGINS
     ]
 
-SECRET_KEY = os.getenv('SECRET_KEY')
+SECRET_KEY = get_env('SECRET_KEY')
 if not SECRET_KEY:
     raise ValueError('SECRET_KEY environment variable is required')
 DEBUG = get_bool_env('DEBUG', False)
@@ -107,11 +129,11 @@ WSGI_APPLICATION = 'config.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('DB_NAME'),
-        'USER': os.getenv('DB_USER'),
-        'PASSWORD': os.getenv('DB_PASSWORD'),
-        'HOST': os.getenv('DB_HOST'),
-        'PORT': os.getenv('DB_PORT'),
+        'NAME': get_db_env('DB_NAME'),
+        'USER': get_db_env('DB_USER'),
+        'PASSWORD': get_db_env('DB_PASSWORD'),
+        'HOST': get_db_env('DB_HOST'),
+        'PORT': get_db_env('DB_PORT'),
     }
 }
 
@@ -153,7 +175,7 @@ SIMPLE_JWT = {
 }
 
 DEFAULT_FRONTEND_ORIGIN = normalize_origin(
-    os.getenv('FRONTEND_ORIGIN', 'https://resume-maker-three-omega.vercel.app')
+    get_env('FRONTEND_ORIGIN', 'https://resume-maker-three-omega.vercel.app')
 )
 
 CORS_ALLOW_ALL_ORIGINS = get_bool_env('CORS_ALLOW_ALL_ORIGINS', False)
@@ -166,18 +188,18 @@ CORS_ALLOWED_ORIGIN_REGEXES = get_list_env('CORS_ALLOWED_ORIGIN_REGEXES', defaul
 CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = get_origin_list_env('CSRF_TRUSTED_ORIGINS', ','.join(CORS_ALLOWED_ORIGINS))
 
-GROQ_API_KEY = os.getenv('GROQ_API_KEY')
-OPENAI_API_KEY = GROQ_API_KEY or os.getenv('OPENAI_API_KEY')
-OPENAI_BASE_URL = os.getenv('OPENAI_BASE_URL')
+GROQ_API_KEY = get_env('GROQ_API_KEY')
+OPENAI_API_KEY = GROQ_API_KEY or get_env('OPENAI_API_KEY')
+OPENAI_BASE_URL = get_env('OPENAI_BASE_URL')
 if not OPENAI_BASE_URL and GROQ_API_KEY:
     OPENAI_BASE_URL = 'https://api.groq.com/openai/v1'
-AI_MODEL = os.getenv('AI_MODEL', 'llama-3.3-70b-versatile' if GROQ_API_KEY else 'gpt-4o-mini')
+AI_MODEL = get_env('AI_MODEL', 'llama-3.3-70b-versatile' if GROQ_API_KEY else 'gpt-4o-mini')
 
 if not OPENAI_API_KEY:
     raise ValueError('OPENAI_API_KEY or GROQ_API_KEY environment variable is required')
 
-CELERY_BROKER_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
-CELERY_RESULT_BACKEND = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+CELERY_BROKER_URL = get_env('REDIS_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = get_env('REDIS_URL', 'redis://localhost:6379/0')
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'

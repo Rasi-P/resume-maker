@@ -276,6 +276,9 @@ class LatexCompilerDetectionTests(SimpleTestCase):
         ), patch(
             'api.latex_compiler.Path.is_file',
             return_value=True,
+        ), patch(
+            'api.latex_compiler.os.access',
+            return_value=True,
         ):
             detected = latex_compiler_module.detect_latex_compiler()
 
