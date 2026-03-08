@@ -5,4 +5,4 @@ aptPkgs = ["texlive-xetex", "texlive-fonts-recommended", "texlive-latex-extra"]
 cmds = ["pip install -r backend/requirements.txt", "command -v xelatex", "xelatex --version"]
 
 [start]
-cmd = "export PATH=\"/usr/local/bin:/usr/bin:/bin:/nix/var/nix/profiles/default/bin:/etc/profiles/per-user/root/bin:$PATH\" && cd backend && gunicorn config.wsgi:application --bind 0.0.0.0:$PORT"
+cmd = "export PATH=\"/usr/local/bin:/usr/bin:/bin:/nix/var/nix/profiles/default/bin:/etc/profiles/per-user/root/bin:$PATH\" && cd backend && gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000}"
