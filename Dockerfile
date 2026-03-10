@@ -5,7 +5,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Runtime deps + XeLaTeX for LaTeX PDF generation.
+# Install system deps + XeLaTeX
 RUN apt-get update && apt-get install -y --no-install-recommends \
     texlive-xetex \
     texlive-fonts-recommended \
@@ -14,11 +14,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN xelatex --version
 
+# Install Python dependencies
 COPY backend/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
+# Copy project
 COPY backend/ /app/
 
-EXPOSE 8000
+# Collect static files (IMPORTANT FIX)
+RUN python manage.py collectstatic --noinput
 
-CMD ["sh", "-c", "gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000}"]
+# Railway networking port
+EXPOSE 8080
+
+# Start server
+CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8080", "--workers", "2", "--threads", "4"]
