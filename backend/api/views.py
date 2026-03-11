@@ -608,9 +608,9 @@ class ResumeOptimizerViewSet(viewsets.GenericViewSet):
             ai_changes.append(
                 "LaTeX cover letter compilation failed on server. Generated a fallback text PDF."
             )
-            fallback_pdf_buffer = PDFService.generate_text_pdf(
-                title="",
+            fallback_pdf_buffer = PDFService.generate_cover_letter_pdf(
                 content=content,
+                name='',
             )
             cover_letter_pdf = self._buffer_to_data_url(
                 fallback_pdf_buffer,
@@ -857,3 +857,4 @@ class ResumeOptimizerViewSet(viewsets.GenericViewSet):
             )
 
         return Response({'document': document_payload}, status=status.HTTP_201_CREATED)
+

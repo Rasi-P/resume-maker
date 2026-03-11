@@ -1,6 +1,7 @@
 import logging
 import re
 import tempfile
+from html import escape
 from io import BytesIO
 from pathlib import Path
 from typing import List
@@ -8,7 +9,7 @@ from typing import List
 from docx import Document
 from pypdf import PdfReader
 from reportlab.lib.pagesizes import letter
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
 from .latex_compiler import compile_latex
@@ -228,19 +229,15 @@ class PDFService:
 
         try:
             pdf_file = BytesIO()
-            doc = SimpleDocTemplate(pdf_file, pagesize=letter)
-            styles = getSampleStyleSheet()
-            story = []
-
-            display_name = (name or '').strip()
-            if display_name:
-                story.append(Paragraph(display_name, styles['Heading1']))
-                story.append(Spacer(1, 12))
-
-            for para in content.split('\n'):
-                if para.strip():
-                    story.append(Paragraph(para, styles['Normal']))
-                    story.append(Spacer(1, 6))
+            doc = SimpleDocTemplate(
+                pdf_file,
+                pagesize=letter,
+                leftMargin=72,
+                rightMargin=72,
+                topMargin=72,
+                bottomMargin=72,
+            )
+            story = PDFService._build_cover_letter_story(content=content, name=name)
 
             doc.build(story)
             pdf_file.seek(0)
@@ -303,6 +300,110 @@ class PDFService:
         return [part.strip() for part in normalized.split('\n\n') if part.strip()]
 
     @staticmethod
+    def _cover_letter_paragraph_to_html(paragraph: str) -> str:
+        normalized = str(paragraph or '').replace('\r\n', '\n').replace('\r', '\n')
+        lines = [escape(line.strip()) for line in normalized.split('\n') if line.strip()]
+        return '<br/>'.join(lines)
+
+    @staticmethod
+    def _build_cover_letter_story(content: str, name: str = ''):
+        paragraphs = PDFService._to_paragraphs(content)
+        if not paragraphs:
+            raise ValueError("Cover letter content is empty")
+
+        styles = getSampleStyleSheet()
+        name_style = ParagraphStyle(
+            'CoverLetterName',
+            parent=styles['Title'],
+            fontSize=15,
+            leading=18,
+            spaceAfter=4,
+        )
+        meta_style = ParagraphStyle(
+            'CoverLetterMeta',
+            parent=styles['Normal'],
+            fontSize=10.5,
+            leading=13,
+            spaceAfter=14,
+        )
+        address_style = ParagraphStyle(
+            'CoverLetterAddress',
+            parent=styles['Normal'],
+            fontSize=11,
+            leading=14,
+            spaceAfter=16,
+        )
+        body_style = ParagraphStyle(
+            'CoverLetterBody',
+            parent=styles['Normal'],
+            fontSize=11,
+            leading=16,
+            spaceAfter=12,
+        )
+        closing_style = ParagraphStyle(
+            'CoverLetterClosing',
+            parent=styles['Normal'],
+            fontSize=11,
+            leading=15,
+            spaceBefore=6,
+            spaceAfter=0,
+        )
+
+        story = []
+        display_name = (name or '').strip()
+        if display_name:
+            first_lines = [line.strip() for line in paragraphs[0].split('\n') if line.strip()]
+            if not first_lines or first_lines[0] != display_name:
+                story.extend([
+                    Paragraph(PDFService._cover_letter_paragraph_to_html(display_name), name_style),
+                    Spacer(1, 10),
+                ])
+
+        closing_markers = {'warm regards,', 'kind regards,', 'best regards,', 'regards,', 'sincerely,'}
+
+        for index, paragraph in enumerate(paragraphs):
+            raw_lines = [line.strip() for line in paragraph.split('\n') if line.strip()]
+            if not raw_lines:
+                continue
+
+            first_line = raw_lines[0]
+            first_line_lower = first_line.lower()
+            paragraph_html = PDFService._cover_letter_paragraph_to_html('\n'.join(raw_lines))
+
+            is_sender_block = (
+                index == 0
+                and len(raw_lines) > 1
+                and not first_line_lower.startswith('date:')
+                and not first_line_lower.startswith('dear ')
+            )
+            if is_sender_block:
+                story.append(Paragraph(PDFService._cover_letter_paragraph_to_html(first_line), name_style))
+                if len(raw_lines) > 1:
+                    story.append(
+                        Paragraph(
+                            PDFService._cover_letter_paragraph_to_html('\n'.join(raw_lines[1:])),
+                            meta_style,
+                        )
+                    )
+                continue
+
+            if first_line_lower.startswith('date:'):
+                story.append(Paragraph(paragraph_html, meta_style))
+                continue
+
+            if len(raw_lines) > 1 and index <= 2 and not first_line_lower.startswith('dear '):
+                story.append(Paragraph(paragraph_html, address_style))
+                continue
+
+            if first_line_lower in closing_markers:
+                story.append(Paragraph(paragraph_html, closing_style))
+                continue
+
+            story.append(Paragraph(paragraph_html, body_style))
+
+        return story
+
+    @staticmethod
     def build_cover_letter_latex(content, name=''):
         if not content or not content.strip():
             raise ValueError("Cover letter content is empty")
@@ -362,3 +463,4 @@ class PDFService:
         except Exception as e:
             logger.error(f"Error generating cover letter DOCX: {str(e)}")
             raise ValueError(f"Failed to generate cover letter DOCX: {str(e)}")
+

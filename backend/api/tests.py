@@ -2,6 +2,8 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
+from pypdf import PdfReader
+
 from django.test import override_settings
 from django.test import SimpleTestCase
 
@@ -174,6 +176,35 @@ class CoverLetterExportTests(SimpleTestCase):
         self.assertTrue(len(raw) > 100)
         self.assertTrue(raw.startswith(b"PK"))
 
+    def test_generate_cover_letter_pdf_preserves_cover_letter_sections(self):
+        content = (
+            "Aleena Jomy\n"
+            "Kannur, Kerala, India\n"
+            "Mobile: +91-8547139184\n"
+            "Email: aleena@example.com\n"
+            "LinkedIn: linkedin.com/in/aleena-jomy\n"
+            "GitHub: github.com/Aleenajomy\n\n"
+            "Date: 11/03/2026\n\n"
+            "Hiring Manager\n"
+            "Acme\n"
+            "Remote\n\n"
+            "Dear Hiring Manager,\n"
+            "I am excited to apply for the Backend Developer role.\n\n"
+            "My background includes API development, testing, and deployment work.\n\n"
+            "Warm regards,\n"
+            "Aleena Jomy"
+        )
+        pdf_buffer = PDFService.generate_cover_letter_pdf(content=content, name='' )
+
+        reader = PdfReader(pdf_buffer)
+        extracted_text = "\n".join(page.extract_text() or "" for page in reader.pages)
+
+        self.assertIn("Aleena Jomy", extracted_text)
+        self.assertIn("Date: 11/03/2026", extracted_text)
+        self.assertIn("Hiring Manager", extracted_text)
+        self.assertIn("Dear Hiring Manager,", extracted_text)
+        self.assertIn("Warm regards,", extracted_text)
+
 
 class PDFLatexPreprocessingTests(SimpleTestCase):
     def test_remove_glyph_to_unicode_lines(self):
@@ -205,7 +236,7 @@ class PDFLatexPreprocessingTests(SimpleTestCase):
 
 class StrictLatexModeTests(SimpleTestCase):
     @override_settings(LATEX_STRICT_MODE=True)
-    @patch('api.views.PDFService.generate_text_pdf')
+    @patch('api.views.PDFService.generate_cover_letter_pdf')
     @patch(
         'api.views.PDFService.generate_cover_letter_pdf_via_latex',
         side_effect=RuntimeError('compile failed'),
@@ -213,7 +244,7 @@ class StrictLatexModeTests(SimpleTestCase):
     def test_cover_letter_export_raises_without_fallback_when_strict_mode_enabled(
         self,
         _mock_cover_letter_latex,
-        mock_generate_text_pdf,
+        mock_generate_cover_letter_pdf,
     ):
         view = ResumeOptimizerViewSet()
 
@@ -224,7 +255,7 @@ class StrictLatexModeTests(SimpleTestCase):
                 ai_changes=[],
             )
 
-        mock_generate_text_pdf.assert_not_called()
+        mock_generate_cover_letter_pdf.assert_not_called()
 
     @override_settings(LATEX_STRICT_MODE=False)
     @patch(
@@ -232,7 +263,7 @@ class StrictLatexModeTests(SimpleTestCase):
         return_value=BytesIO(b'PKDOCX'),
     )
     @patch(
-        'api.views.PDFService.generate_text_pdf',
+        'api.views.PDFService.generate_cover_letter_pdf',
         return_value=BytesIO(b'%PDF-fallback'),
     )
     @patch(
@@ -242,7 +273,7 @@ class StrictLatexModeTests(SimpleTestCase):
     def test_cover_letter_export_uses_fallback_when_strict_mode_disabled(
         self,
         _mock_cover_letter_latex,
-        _mock_generate_text_pdf,
+        _mock_generate_cover_letter_pdf,
         _mock_generate_cover_letter_docx,
     ):
         view = ResumeOptimizerViewSet()
