@@ -762,7 +762,7 @@ class ResumeOptimizerViewSet(viewsets.GenericViewSet):
                     if rendered_template.strip():
                         updated_latex = rendered_template
                         ai_changes.append(
-                            "Rendered LaTeX template placeholders for headline, summary, and skills."
+                            "Rendered LaTeX template placeholders for summary and skills."
                         )
                     else:
                         ai_changes.append(

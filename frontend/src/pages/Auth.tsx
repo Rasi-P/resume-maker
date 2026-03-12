@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import axios from 'axios';
 import { Link, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff } from 'lucide-react';
 import { authService } from '../services/api';
+import { extractApiErrorMessage } from '../utils/apiError';
 
 type AuthMode = 'login' | 'register';
 
@@ -11,68 +11,6 @@ const defaultFormState = {
   email: '',
   password: '',
   passwordConfirm: '',
-};
-
-const getFirstString = (value: unknown): string | null => {
-  if (typeof value === 'string' && value.trim()) {
-    return value;
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const nested = getFirstString(item);
-      if (nested) {
-        return nested;
-      }
-    }
-  }
-
-  if (typeof value === 'object' && value !== null) {
-    for (const item of Object.values(value as Record<string, unknown>)) {
-      const nested = getFirstString(item);
-      if (nested) {
-        return nested;
-      }
-    }
-  }
-
-  return null;
-};
-
-const extractErrorMessage = (error: unknown): string => {
-  if (axios.isAxiosError(error)) {
-    const status = error.response?.status;
-    const data = error.response?.data;
-    const apiMessage = getFirstString(data);
-
-    if (apiMessage) {
-      const normalized = apiMessage.toLowerCase();
-      if (
-        status === 401 ||
-        normalized.includes('no active account') ||
-        normalized.includes('authentication failed')
-      ) {
-        return 'Unauthorized access. Please check your username and password.';
-      }
-      return apiMessage;
-    }
-
-    if (status === 401) {
-      return 'Unauthorized access. Please check your username and password.';
-    }
-    if (status === 400) {
-      return 'Invalid request. Please check your input and try again.';
-    }
-    if (status === 500) {
-      return 'Server error. Please try again later.';
-    }
-  }
-
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return 'Request failed. Please try again.';
 };
 
 export const Auth: React.FC = () => {
@@ -150,7 +88,16 @@ export const Auth: React.FC = () => {
         await handleRegister();
       }
     } catch (error) {
-      setErrorMessage(extractErrorMessage(error));
+      setErrorMessage(
+        extractApiErrorMessage(error, {
+          statusMessages: {
+            400: 'Invalid request. Please check your input and try again.',
+            500: 'Server error. Please try again later.',
+          },
+          unauthorizedMessage: 'Unauthorized access. Please check your username and password.',
+          unauthorizedMatchers: ['no active account', 'authentication failed'],
+        })
+      );
     } finally {
       setLoading(false);
     }

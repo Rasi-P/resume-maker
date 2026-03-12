@@ -99,6 +99,104 @@ class PlainTextSectionLockTests(SimpleTestCase):
             )
 
 
+
+class LatexSectionLockTests(SimpleTestCase):
+    def setUp(self):
+        self.resume_text = r"""
+\documentclass{article}
+\begin{document}
+\begin{center}
+{\Large \scshape Aleena Jomy} \\
+Software Developer \\
+Kannur, Kerala, India \\
+\end{center}
+\section{Summary}
+Motivated Computer Science graduate with hands-on experience building web applications using Python, Django, and React.js.
+\section{Experience}
+Python Django Developer Intern at Zecser Business LLP.
+\section{Projects}
+Stylo virtual wardrobe app built with Django and React.js.
+\section{Skills}
+\begin{itemize}[leftmargin=*,noitemsep,topsep=0pt]
+  \item \textbf{Programming:} Python, JavaScript
+  \item \textbf{Frontend:} React.js, HTML5, CSS3, Bootstrap
+  \item \textbf{Backend:} Django, Django REST Framework
+  \item \textbf{Databases:} MySQL (SQL), PostgreSQL
+  \item \textbf{Tools:} Git, GitHub, Postman, Linux
+  \item \textbf{Practices:} Debugging, Testing, Software Deployment
+\end{itemize}
+\section{Education}
+B.Tech in Computer Science and Engineering.
+\end{document}
+"""
+        self.job_data = {
+            'company_name': 'Acme',
+            'job_title': 'Backend Developer',
+            'job_description': 'Need Python, Django, PostgreSQL, Docker, and Kubernetes experience for backend API work.',
+            'requirements': 'Strong communication and ownership.',
+        }
+        self.user_profile = {
+            'full_name': 'Aleena Jomy',
+            'email': 'aleena@example.com',
+        }
+
+    def test_extract_allowed_skills_from_latex_section_reads_original_skills_only(self):
+        sections = AIService.extract_latex_sections(self.resume_text)
+
+        allowed_skills = AIService.extract_allowed_skills_from_latex_section(
+            sections['skills']['content']
+        )
+
+        self.assertIn('Python', allowed_skills)
+        self.assertIn('Django', allowed_skills)
+        self.assertIn('PostgreSQL', allowed_skills)
+        self.assertNotIn('Docker', allowed_skills)
+
+    @patch('api.ai_service.AIService._call_openai_with_retry')
+    def test_optimize_latex_resume_only_updates_summary_and_skills(self, mock_ai_call):
+        mock_ai_call.return_value = (
+            {
+                'headline': 'Principal Backend Engineer',
+                'summary': 'Computer Science graduate with hands-on experience in Python, Django, PostgreSQL, debugging, and testing.',
+                'skills': 'Python, Django, Docker, Kubernetes',
+                'changes_made': ['Updated headline for role alignment.', 'Refined summary wording.', 'Expanded skills list.'],
+            },
+            {'prompt_tokens': 11, 'completion_tokens': 22, 'total_tokens': 33},
+        )
+
+        original_sections = AIService.extract_latex_sections(self.resume_text)
+        result = AIService.optimize_latex_resume(
+            latex_text=self.resume_text,
+            job_data=self.job_data,
+            user_profile=self.user_profile,
+        )
+        updated_latex = result['updated_latex']
+        updated_sections = AIService.extract_latex_sections(updated_latex)
+
+        self.assertIn('Software Developer', updated_latex)
+        self.assertNotIn('Principal Backend Engineer', updated_latex)
+        self.assertIn(
+            'Computer Science graduate with hands-on experience in Python, Django, PostgreSQL, debugging, and testing.',
+            updated_sections['summary']['content'],
+        )
+        self.assertNotIn('Docker', updated_sections['skills']['content'])
+        self.assertNotIn('Kubernetes', updated_sections['skills']['content'])
+        self.assertLess(
+            updated_sections['skills']['content'].find(r'\item \textbf{Backend:} Django, Django REST Framework'),
+            updated_sections['skills']['content'].find(r'\item \textbf{Frontend:} React.js, HTML5, CSS3, Bootstrap'),
+        )
+
+        for protected in ('experience', 'projects', 'education'):
+            self.assertEqual(
+                original_sections[protected]['content'],
+                updated_sections[protected]['content'],
+                msg=f"{protected} section should remain unchanged",
+            )
+
+        self.assertEqual('', result['headline_update'])
+        self.assertEqual(33, result['token_usage']['total_tokens'])
+        self.assertNotIn('Updated headline for role alignment.', result['changes_made'])
+
 class LatexTemplatePlaceholderTests(SimpleTestCase):
     def test_has_latex_template_placeholders(self):
         template_text = r"\section{Summary}{{SUMMARY}}"

@@ -42,22 +42,25 @@ Do not include markdown or code fences.
 """
 
 LATEX_SECTION_SYSTEM_PROMPT = """
-You are a LaTeX resume optimization engine.
+You are an ATS resume optimizer working with a LaTeX resume.
 Rules:
-- Keep all LaTeX commands and structure intact.
+- The uploaded LaTeX resume is the single source of truth.
+- Do not invent, infer, or assume any skills, tools, technologies, experience, or qualifications.
+- Extract the allowed skills list only from the current Skills section provided in the prompt.
+- Use job description keywords only when they match the allowed skills list.
+- Ignore any job description technology that is not already in the allowed skills list.
+- Keep all LaTeX commands, environments, and section order intact.
 - Do not add, remove, or rename any \\section headings.
-- Do not modify Experience, Projects, or Education content.
-- Modify only:
-  1) the single headline line below the name in the header (if present),
-  2) Summary section wording,
-  3) Skills section wording.
-- Keep command/layout structure in those areas intact.
-- Do not modify location/contact lines in header.
+- Do not modify the header, Experience, Projects, Education, or any other section.
+- Modify only the content inside Summary and Skills.
+- Keep the LaTeX structure already used inside those two sections.
+- Use concise, grammatical, professional, ATS-friendly wording.
+- Avoid awkward phrasing and unnecessary repetition.
 - Do not include markdown code fences.
 Return strict JSON only with keys:
 headline, summary, skills, changes_made.
 If a section was missing in input, return an empty string for that key.
-headline must be plain text only (no trailing \\).
+headline must always be an empty string.
 """
 
 PLAIN_TEXT_SECTION_SYSTEM_PROMPT = """
@@ -1158,6 +1161,133 @@ The "email_body" must start with "Dear Hiring Team," and contain only the email 
         return sections
 
     @staticmethod
+    def _dedupe_preserve_order(values: List[str]) -> List[str]:
+        deduped: List[str] = []
+        seen: set[str] = set()
+        for value in values:
+            cleaned = str(value or '').strip()
+            if not cleaned:
+                continue
+            key = cleaned.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(cleaned)
+        return deduped
+
+    @staticmethod
+    def _normalize_skill_phrase(value: str) -> str:
+        normalized = str(value or '').strip().lower()
+        if not normalized:
+            return ''
+
+        normalized = re.sub(r'\([^)]*\)', ' ', normalized)
+        normalized = normalized.replace('&', ' and ')
+        normalized = normalized.replace('/', ' ')
+        normalized = normalized.replace('.', ' ')
+        normalized = re.sub(r'[^a-z0-9+#]+', ' ', normalized)
+        return re.sub(r'\s+', ' ', normalized).strip()
+
+    @staticmethod
+    def extract_allowed_skills_from_latex_section(skills_content: str) -> List[str]:
+        plain_text = AIService.latex_to_plain_text(skills_content)
+        if not plain_text.strip():
+            return []
+
+        allowed_skills: List[str] = []
+        for raw_line in plain_text.splitlines():
+            line = re.sub(r'^[\-\u2022]\s*', '', raw_line.strip())
+            if not line:
+                continue
+
+            skill_values = line.split(':', 1)[1] if ':' in line else line
+            parts = [part.strip() for part in re.split(r'[;,]', skill_values) if part.strip()]
+            if not parts and skill_values.strip():
+                parts = [skill_values.strip()]
+
+            for part in parts:
+                cleaned = re.sub(r'\s+', ' ', part).strip(' -')
+                if cleaned:
+                    allowed_skills.append(cleaned)
+
+        return AIService._dedupe_preserve_order(allowed_skills)
+
+    @staticmethod
+    def _split_latex_item_blocks(section_content: str) -> Tuple[str, List[str], str]:
+        item_pattern = re.compile(
+            r'^\s*\\item(?:\[[^\]]*\])?[\s\S]*?(?=^\s*\\item(?:\[[^\]]*\])?|^\s*\\end\{itemize\}|$)',
+            flags=re.MULTILINE,
+        )
+        matches = list(item_pattern.finditer(section_content))
+        if not matches:
+            return section_content, [], ''
+
+        prefix = section_content[:matches[0].start()]
+        suffix = section_content[matches[-1].end():]
+        items = [match.group(0).strip() for match in matches if match.group(0).strip()]
+        return prefix, items, suffix
+
+    @staticmethod
+    def _score_latex_skill_item(
+        item_block: str,
+        normalized_job_text: str,
+        job_tokens: set[str],
+    ) -> int:
+        score = 0
+        for skill in AIService.extract_allowed_skills_from_latex_section(item_block):
+            normalized_skill = AIService._normalize_skill_phrase(skill)
+            if not normalized_skill:
+                continue
+
+            if normalized_skill in normalized_job_text:
+                score += 5 + len(normalized_skill.split())
+                continue
+
+            skill_tokens = set(normalized_skill.split())
+            score += len(skill_tokens.intersection(job_tokens))
+
+        return score
+
+    @staticmethod
+    def build_latex_skills_section_update(skills_content: str, job_description: str) -> str:
+        original_content = str(skills_content or '').strip()
+        if not original_content:
+            return ''
+
+        prefix, item_blocks, suffix = AIService._split_latex_item_blocks(original_content)
+        if not item_blocks:
+            return original_content
+
+        normalized_job_text = AIService._normalize_skill_phrase(job_description)
+        job_tokens = set(AIService._tokenize_keywords(job_description))
+        scored_items = [
+            (
+                AIService._score_latex_skill_item(item_block, normalized_job_text, job_tokens),
+                index,
+                item_block,
+            )
+            for index, item_block in enumerate(item_blocks)
+        ]
+
+        if any(score > 0 for score, _, _ in scored_items):
+            ordered_items = [
+                item_block
+                for _, _, item_block in sorted(scored_items, key=lambda value: (-value[0], value[1]))
+            ]
+        else:
+            ordered_items = item_blocks
+
+        parts: List[str] = []
+        prefix_block = prefix.rstrip()
+        suffix_block = suffix.lstrip('\n').rstrip()
+        if prefix_block:
+            parts.append(prefix_block)
+        parts.append('\n'.join(item.rstrip() for item in ordered_items))
+        if suffix_block:
+            parts.append(suffix_block)
+        return '\n'.join(parts).strip()
+
+    @staticmethod
     def _sanitize_latex_section_update(updated_content: str) -> str:
         cleaned = (updated_content or '').strip()
         if not cleaned:
@@ -1317,15 +1447,11 @@ The "email_body" must start with "Dear Hiring Team," and contain only the email 
         if not isinstance(job_data, dict):
             raise ValueError("Job data is invalid")
 
+        _ = user_profile
         section_map = AIService.extract_latex_sections(latex_text)
         if not section_map:
             raise ValueError("Unable to detect editable LaTeX sections.")
 
-        headline_metadata = AIService.extract_latex_headline(latex_text)
-        headline_content = AIService._truncate_text(
-            str(headline_metadata.get('headline', '')) if headline_metadata else '',
-            220,
-        )
         summary_content = AIService._truncate_text(
             section_map.get('summary', {}).get('content', ''),
             MAX_LATEX_SECTION_CHARS,
@@ -1334,12 +1460,17 @@ The "email_body" must start with "Dear Hiring Team," and contain only the email 
             section_map.get('skills', {}).get('content', ''),
             MAX_LATEX_SECTION_CHARS,
         )
+        allowed_skills = AIService.extract_allowed_skills_from_latex_section(skills_content)
+        resume_context = AIService._truncate_text(
+            AIService.latex_to_plain_text(latex_text),
+            MAX_RESUME_CHARS,
+        )
 
-        if not summary_content and not skills_content and not headline_content:
-            raise ValueError("Headline, Summary, or Skills section not found in LaTeX resume.")
+        if not summary_content and not skills_content:
+            raise ValueError("Summary or Skills section not found in LaTeX resume.")
 
-        prompt = f"""User Profile:
-{json.dumps(user_profile, indent=2)}
+        prompt = f"""Original Resume Context (single source of truth):
+{resume_context}
 
 Job Title: {job_data.get('job_title', '')}
 Company: {job_data.get('company_name', '')}
@@ -1349,18 +1480,18 @@ Job Description:
 Requirements:
 {AIService._truncate_text(str(job_data.get('requirements', '')), MAX_REQUIREMENTS_CHARS)}
 
+Allowed Skills List (extracted from the original Skills section):
+{json.dumps(allowed_skills, indent=2)}
+
 Current Summary Section:
-{summary_content}
+{summary_content if summary_content else "(Missing)"}
 
 Current Skills Section:
-{skills_content}
-
-Current Header Headline Line (below name):
-{headline_content if headline_content else "(Not found)"}
+{skills_content if skills_content else "(Missing)"}
 
 Return JSON with this exact schema:
 {{
-  "headline": "string",
+  "headline": "",
   "summary": "string",
   "skills": "string",
   "changes_made": ["string"]
@@ -1376,9 +1507,17 @@ Return JSON with this exact schema:
         if not isinstance(payload, dict):
             raise ValueError("Invalid LaTeX optimization response format")
 
+        summary_update = AIService._sanitize_latex_section_update(str(payload.get('summary', '')).strip())
+        if not summary_update:
+            summary_update = summary_content
+
+        skills_update = AIService.build_latex_skills_section_update(
+            skills_content=skills_content,
+            job_description=str(job_data.get('job_description', '')),
+        )
         section_updates: Dict[str, str] = {
-            'summary': str(payload.get('summary', '')).strip(),
-            'skills': str(payload.get('skills', '')).strip(),
+            'summary': summary_update,
+            'skills': skills_update,
         }
 
         updated_latex = AIService.apply_latex_section_updates(
@@ -1387,32 +1526,23 @@ Return JSON with this exact schema:
             section_updates=section_updates,
         )
 
-        old_headline = str(headline_metadata.get('headline', '')).strip() if headline_metadata else ''
-        candidate_headline = str(payload.get('headline', '')).strip()
-        sanitized_headline = AIService._sanitize_latex_headline_update(candidate_headline)
-        headline_updated = False
-        if headline_metadata and sanitized_headline and sanitized_headline != old_headline:
-            updated_latex = AIService.apply_latex_headline_update(
-                latex_text=updated_latex,
-                headline_metadata=headline_metadata,
-                updated_headline=sanitized_headline,
-            )
-            headline_updated = True
-
-        updated_latex = AIService._format_latex_for_readability(updated_latex)
-
         raw_changes = payload.get('changes_made', [])
         if not isinstance(raw_changes, list):
             raw_changes = []
-        changes_made = [str(item).strip() for item in raw_changes if str(item).strip()]
-        if headline_updated:
-            changes_made.append("Updated header headline for job alignment.")
+        changes_made = [
+            str(item).strip()
+            for item in raw_changes
+            if str(item).strip() and 'headline' not in str(item).lower() and 'header' not in str(item).lower()
+        ]
+        if section_updates['skills'] and section_updates['skills'] != skills_content:
+            changes_made.append("Reordered existing skills to prioritize job-relevant matches from the original skills list.")
+        changes_made = AIService._dedupe_preserve_order(changes_made)
 
         return {
             'updated_latex': updated_latex,
             'changes_made': changes_made,
             'sections_found': list(section_map.keys()),
-            'headline_update': str(payload.get('headline', '')).strip(),
+            'headline_update': '',
             'summary_update': section_updates['summary'],
             'skills_update': section_updates['skills'],
             'token_usage': usage,
