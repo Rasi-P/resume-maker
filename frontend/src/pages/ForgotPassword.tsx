@@ -1,54 +1,7 @@
 import React, { useState } from 'react';
-import axios from 'axios';
 import { Link, useNavigate } from 'react-router-dom';
 import { authService } from '../services/api';
-
-const getFirstString = (value: unknown): string | null => {
-  if (typeof value === 'string' && value.trim()) {
-    return value;
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const nested = getFirstString(item);
-      if (nested) {
-        return nested;
-      }
-    }
-  }
-
-  if (typeof value === 'object' && value !== null) {
-    for (const item of Object.values(value as Record<string, unknown>)) {
-      const nested = getFirstString(item);
-      if (nested) {
-        return nested;
-      }
-    }
-  }
-
-  return null;
-};
-
-const extractErrorMessage = (error: unknown): string => {
-  if (axios.isAxiosError(error)) {
-    const apiMessage = getFirstString(error.response?.data);
-    if (apiMessage) {
-      return apiMessage;
-    }
-    if (error.response?.status === 400) {
-      return 'Please provide a valid email address.';
-    }
-    if (error.response?.status === 500) {
-      return 'Server error. Please try again later.';
-    }
-  }
-
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return 'Request failed. Please try again.';
-};
+import { extractApiErrorMessage } from '../utils/apiError';
 
 export const ForgotPassword: React.FC = () => {
   const navigate = useNavigate();
@@ -79,7 +32,14 @@ export const ForgotPassword: React.FC = () => {
         navigate(nextUrl);
       }, 350);
     } catch (error) {
-      setErrorMessage(extractErrorMessage(error));
+      setErrorMessage(
+        extractApiErrorMessage(error, {
+          statusMessages: {
+            400: 'Please provide a valid email address.',
+            500: 'Server error. Please try again later.',
+          },
+        })
+      );
     } finally {
       setLoading(false);
     }

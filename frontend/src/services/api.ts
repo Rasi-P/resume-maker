@@ -66,11 +66,11 @@ api.interceptors.response.use(
 
 export const authService = {
   register: async (username: string, email: string, password: string, password_confirm: string) => {
-    const response = await api.post('/auth/register/', { 
-      username, 
-      email, 
-      password, 
-      password_confirm 
+    const response = await api.post('/auth/register/', {
+      username,
+      email,
+      password,
+      password_confirm,
     });
     return response.data;
   },
@@ -115,7 +115,7 @@ export const authService = {
     });
     return response.data;
   },
-  
+
   logout: () => {
     clearTokens();
   },
@@ -150,46 +150,9 @@ export const resumeService = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
-  
+
   list: () => api.get('/resumes/'),
-  get: (id: number) => api.get(`/resumes/${id}/`),
   delete: (id: number) => api.delete(`/resumes/${id}/`),
-};
-
-export const jobDescriptionService = {
-  create: async (title: string, content: string, file?: File) => {
-    const formData = new FormData();
-    formData.append('title', title);
-    formData.append('content', content);
-    if (file) formData.append('file', file);
-    return api.post('/job-descriptions/', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-  },
-  
-  list: () => api.get('/job-descriptions/'),
-  get: (id: number) => api.get(`/job-descriptions/${id}/`),
-};
-
-export const optimizedResumeService = {
-  create: (resumeId: number, jobDescriptionId: number) => 
-    api.post('/optimized-resumes/', {
-      resume_id: resumeId,
-      job_description_id: jobDescriptionId,
-    }),
-  
-  list: () => api.get('/optimized-resumes/'),
-  get: (id: number) => api.get(`/optimized-resumes/${id}/`),
-};
-
-export const coverLetterService = {
-  create: (optimizedResumeId: number) =>
-    api.post('/cover-letters/', {
-      optimized_resume_id: optimizedResumeId,
-    }),
-  
-  list: () => api.get('/cover-letters/'),
-  get: (id: number) => api.get(`/cover-letters/${id}/`),
 };
 
 export const resumeOptimizerService = {
@@ -216,11 +179,6 @@ export const resumeOptimizerService = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
-};
-
-export const generatedDocumentService = {
-  list: () => api.get('/generated-documents/'),
-  get: (id: number) => api.get(`/generated-documents/${id}/`),
 };
 
 export default api;
